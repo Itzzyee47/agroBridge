@@ -1,0 +1,6 @@
+{
+  "name": "AgroBridge",
+  "description": "A digital agricultural marketplace connecting rural farmers and urban consumers through a Managed Proxy Marketplace Model with AI-driven Market Intelligence.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
