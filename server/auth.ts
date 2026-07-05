@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from "express";
 import crypto from "crypto";
-import { db, hashPassword, User, Agent } from "./db.js";
+import { db, User, Agent, hashPassword } from "./db.js";
 
 const JWT_SECRET = "agrobridge_jwt_secret_token_2026_super_secure";
 
@@ -54,7 +54,7 @@ export function verifyToken(token: string): any | null {
 }
 
 // Authentication Middleware
-export function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+export async function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   let token = "";
 
   // 1. Try to extract from cookie (using cookie-parser)
@@ -77,7 +77,7 @@ export function authenticate(req: AuthenticatedRequest, res: Response, next: Nex
   }
 
   // Find user to verify they still exist and check status
-  const user = db.users.find((u) => u.id === decoded.id);
+  const user = await db.findUser(decoded.id);
   if (!user) {
     return res.status(401).json({ error: "User no longer exists" });
   }
@@ -113,7 +113,7 @@ export function requireRole(roles: Array<"admin" | "agent" | "buyer">) {
 const authRouter = Router();
 
 // 1. REGISTER
-authRouter.post("/register", (req: Request, res: Response) => {
+authRouter.post("/register", async (req: Request, res: Response) => {
   try {
     const { name, email, password, phone, role, nationalId, serviceArea } = req.body;
 
@@ -126,7 +126,7 @@ authRouter.post("/register", (req: Request, res: Response) => {
     }
 
     // Check if email already exists
-    const existing = db.users.find((u) => u.email.toLowerCase() === email.toLowerCase());
+    const existing = await db.findUser(email);
     if (existing) {
       return res.status(400).json({ error: "Email already registered" });
     }
@@ -152,7 +152,7 @@ authRouter.post("/register", (req: Request, res: Response) => {
       createdAt: new Date().toISOString(),
     };
 
-    db.users.push(newUser);
+    await db.addUser(newUser);
 
     // If agent, create the agent profile
     if (isAgent) {
@@ -162,10 +162,10 @@ authRouter.post("/register", (req: Request, res: Response) => {
         serviceArea,
         approvalStatus: "pending",
       };
-      db.agents.push(newAgent);
+      await db.addAgent(newAgent);
 
       // Create admin notification
-      db.notifications.push({
+      await db.addNotification({
         id: "not_" + Math.random().toString(36).substring(2, 11),
         userId: "usr_admin", // Target administrator
         title: "New Agent Registered",
@@ -174,8 +174,6 @@ authRouter.post("/register", (req: Request, res: Response) => {
         createdAt: new Date().toISOString(),
       });
     }
-
-    db.save();
 
     // Sign Token
     const token = signToken({ id: newUser.id, role: newUser.role });
@@ -208,7 +206,7 @@ authRouter.post("/register", (req: Request, res: Response) => {
 });
 
 // 2. LOGIN
-authRouter.post("/login", (req: Request, res: Response) => {
+authRouter.post("/login", async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
 
@@ -216,7 +214,7 @@ authRouter.post("/login", (req: Request, res: Response) => {
       return res.status(400).json({ error: "Email and password are required" });
     }
 
-    const user = db.users.find((u) => u.email.toLowerCase() === email.toLowerCase());
+    const user = await db.findUser(email);
     if (!user) {
       return res.status(401).json({ error: "Invalid email or password" });
     }
@@ -258,7 +256,7 @@ authRouter.post("/login", (req: Request, res: Response) => {
 });
 
 // 3. ME
-authRouter.get("/me", authenticate, (req: AuthenticatedRequest, res) => {
+authRouter.get("/me", authenticate, async (req: AuthenticatedRequest, res) => {
   const user = req.user!;
   const token = signToken({ id: user.id, role: user.role });
   res.json({

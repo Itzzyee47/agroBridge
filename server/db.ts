@@ -1,15 +1,6 @@
-import Database from "better-sqlite3";
-import path from "path";
+import { Firestore } from "firebase-admin/firestore";
 import crypto from "crypto";
-
-const DATA_DIR = path.join(process.cwd(), "data");
-const DB_FILE = path.join(DATA_DIR, "agrobridge.db");
-
-// Create data directory if it doesn't exist
-import fs from "fs";
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
+import { seedData } from "./seed.js";
 
 // Password Helper
 export function hashPassword(password: string): string {
@@ -117,522 +108,312 @@ export interface PlatformConfig {
   platformPercentage: number;
 }
 
-class SQLiteDb {
-  private db: Database.Database;
+// Get or initialize Firestore
+let _db: Firestore | null = null;
+let _initPromise: Promise<void> | null = null;
 
-  constructor() {
-    this.db = new Database(DB_FILE);
-    this.initSchema();
-    this.seedIfEmpty();
+async function getDb(): Promise<Firestore> {
+  if (_db) return _db;
+  
+  if (_initPromise) {
+    await _initPromise;
+    return _db!;
+  }
+  
+  _initPromise = (async () => {
+    const { getFirestore } = await import("firebase-admin/firestore");
+    const { initializeApp, cert, getApps } = await import("firebase-admin/app");
+    const path = await import("path");
+    const fs = await import("fs");
+    
+    if (!getApps().length) {
+      let serviceAccount;
+      
+      // Option 1: Full JSON in FIREBASE_SERVICE_ACCOUNT env var
+      if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+        serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      } 
+      // Option 2: Individual keys in .env
+      else if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+        serviceAccount = {
+          projectId: process.env.FIREBASE_PROJECT_ID,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+          // Fix newline formatting from .env
+          privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+        };
+      } 
+      // Option 3: Read from service account file for local development
+      else {
+        // Use process.cwd() to get project root
+        const serviceAccountPath = path.join(process.cwd(), "data", "serviceAccountKey.json");
+        
+        if (fs.existsSync(serviceAccountPath)) {
+          const content = fs.readFileSync(serviceAccountPath, "utf-8");
+          serviceAccount = JSON.parse(content);
+        } else {
+          throw new Error("No Firebase service account found. Set FIREBASE_SERVICE_ACCOUNT, FIREBASE_PROJECT_ID/FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY env vars, or create data/serviceAccountKey.json");
+        }
+      }
+      
+      initializeApp({
+        credential: cert(serviceAccount)
+      });
+    }
+    
+    _db = getFirestore();
+  })();
+  
+  await _initPromise;
+  return _db!;
+}
+
+class FirebaseDb {
+  private initialized = false;
+  private _config: PlatformConfig = { farmerPercentage: 85, agentPercentage: 10, platformPercentage: 5 };
+
+  private async getDb(): Promise<Firestore> {
+    return getDb();
   }
 
-  private initSchema() {
-    // Users table
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS users (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        email TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        phone TEXT,
-        role TEXT NOT NULL CHECK(role IN ('admin', 'agent', 'buyer')),
-        verification_status TEXT NOT NULL DEFAULT 'pending' CHECK(verification_status IN ('pending', 'verified', 'suspended')),
-        created_at TEXT NOT NULL
-      )
-    `);
+  private async seedIfEmpty() {
+    if (this.initialized) return;
+    
+    const db = await this.getDb();
+    const usersSnapshot = await db.collection("users").limit(1).get();
+    if (!usersSnapshot.empty) {
+      const configDoc = await db.collection("config").doc("default").get();
+      if (configDoc.exists) {
+        this._config = configDoc.data() as PlatformConfig;
+      }
+      this.initialized = true;
+      return;
+    }
 
-    // Agents table
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS agents (
-        user_id TEXT PRIMARY KEY,
-        national_id TEXT,
-        service_area TEXT,
-        approval_status TEXT NOT NULL DEFAULT 'pending' CHECK(approval_status IN ('pending', 'approved', 'rejected')),
-        FOREIGN KEY (user_id) REFERENCES users(id)
-      )
-    `);
-
-    // Farmers table
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS farmers (
-        id TEXT PRIMARY KEY,
-        agent_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        village TEXT,
-        location TEXT,
-        phone TEXT,
-        farm_size TEXT,
-        crop_types TEXT,
-        notes TEXT,
-        created_at TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'archived')),
-        FOREIGN KEY (agent_id) REFERENCES users(id)
-      )
-    `);
-
-    // Products table
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS products (
-        id TEXT PRIMARY KEY,
-        farmer_id TEXT NOT NULL,
-        farmer_name TEXT NOT NULL,
-        category TEXT NOT NULL,
-        name TEXT NOT NULL,
-        description TEXT,
-        price INTEGER NOT NULL,
-        stock INTEGER NOT NULL,
-        unit TEXT NOT NULL,
-        images TEXT,
-        availability TEXT NOT NULL DEFAULT 'immediate' CHECK(availability IN ('immediate', 'seasonal', 'upcoming')),
-        created_at TEXT NOT NULL,
-        FOREIGN KEY (farmer_id) REFERENCES farmers(id)
-      )
-    `);
-
-    // Orders table
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS orders (
-        id TEXT PRIMARY KEY,
-        buyer_id TEXT NOT NULL,
-        buyer_name TEXT NOT NULL,
-        shipping_address TEXT NOT NULL,
-        phone TEXT NOT NULL,
-        payment_status TEXT NOT NULL DEFAULT 'pending' CHECK(payment_status IN ('pending', 'paid')),
-        delivery_status TEXT NOT NULL DEFAULT 'pending' CHECK(delivery_status IN ('pending', 'confirmed', 'packed', 'in_transit', 'delivered', 'cancelled')),
-        totals TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY (buyer_id) REFERENCES users(id)
-      )
-    `);
-
-    // Order products table (for order items)
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS order_products (
-        id TEXT PRIMARY KEY,
-        order_id TEXT NOT NULL,
-        product_id TEXT NOT NULL,
-        name TEXT NOT NULL,
-        quantity INTEGER NOT NULL,
-        price INTEGER NOT NULL,
-        unit TEXT NOT NULL,
-        farmer_id TEXT NOT NULL,
-        agent_id TEXT NOT NULL,
-        FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
-      )
-    `);
-
-    // Reviews table
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS reviews (
-        id TEXT PRIMARY KEY,
-        buyer_id TEXT NOT NULL,
-        buyer_name TEXT NOT NULL,
-        product_id TEXT NOT NULL,
-        rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
-        comment TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY (buyer_id) REFERENCES users(id),
-        FOREIGN KEY (product_id) REFERENCES products(id)
-      )
-    `);
-
-    // Notifications table
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS notifications (
-        id TEXT PRIMARY KEY,
-        user_id TEXT NOT NULL,
-        title TEXT NOT NULL,
-        message TEXT NOT NULL,
-        read INTEGER NOT NULL DEFAULT 0,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY (user_id) REFERENCES users(id)
-      )
-    `);
-
-    // Config table (single row)
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS config (
-        id INTEGER PRIMARY KEY CHECK(id = 1),
-        farmer_percentage INTEGER NOT NULL,
-        agent_percentage INTEGER NOT NULL,
-        platform_percentage INTEGER NOT NULL
-      )
-    `);
-  }
-
-  private seedIfEmpty() {
-    const userCount = this.db.prepare("SELECT COUNT(*) as count FROM users").get() as { count: number };
-    if (userCount.count > 0) return;
-
-    console.log("Seeding initial AgroBridge database...");
+    console.log("Seeding initial AgroBridge data to Firebase...");
+    const batch = db.batch();
     const dateStr = new Date().toISOString();
 
-    // Seed users
-    const insertUser = this.db.prepare(`
-      INSERT INTO users (id, name, email, password_hash, phone, role, verification_status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+    const users = seedData.users.map(u => ({
+      ...u,
+      passwordHash: hashPassword(u.passwordHash),
+      createdAt: dateStr,
+    }));
+    users.forEach(u => {
+      const ref = db.collection("users").doc(u.id);
+      batch.set(ref, u);
+    });
 
-    const adminUser = insertUser.run(
-      "usr_admin", "Mukasa David", "admin@agrobridge.com", hashPassword("admin123"),
-      "+256 772 123456", "admin", "verified", dateStr
-    );
+    seedData.agents.forEach(a => {
+      const ref = db.collection("agents").doc(a.userId);
+      batch.set(ref, a);
+    });
 
-    const agent1 = insertUser.run(
-      "usr_agent1", "Nsubuga Peter", "agent1@agrobridge.com", hashPassword("agent123"),
-      "+256 782 987654", "agent", "verified", dateStr
-    );
+    seedData.farmers.forEach(f => {
+      const ref = db.collection("farmers").doc(f.id);
+      batch.set(ref, f);
+    });
 
-    const agent2 = insertUser.run(
-      "usr_agent2", "Aisha Kamara", "agent2@agrobridge.com", hashPassword("agent123"),
-      "+256 752 444555", "agent", "verified", dateStr
-    );
+    seedData.products.forEach(p => {
+      const ref = db.collection("products").doc(p.id);
+      batch.set(ref, p);
+    });
 
-    const buyer1 = insertUser.run(
-      "usr_buyer1", "Sarah Namubiru", "buyer@agrobridge.com", hashPassword("buyer123"),
-      "+256 701 111222", "buyer", "verified", dateStr
-    );
+    const configRef = db.collection("config").doc("default");
+    batch.set(configRef, seedData.config);
 
-    // Seed agents
-    const insertAgent = this.db.prepare(`
-      INSERT INTO agents (user_id, national_id, service_area, approval_status)
-      VALUES (?, ?, ?, ?)
-    `);
-
-    insertAgent.run("usr_agent1", "NIN-UG-19887722A", "Mityana & Wakiso Districts", "approved");
-    insertAgent.run("usr_agent2", "NIN-UG-19942233B", "Luweero Rural Cooperatives", "approved");
-
-    // Seed farmers
-    const insertFarmer = this.db.prepare(`
-      INSERT INTO farmers (id, agent_id, name, village, location, phone, farm_size, crop_types, notes, created_at, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    insertFarmer.run(
-      "farm_1", "usr_agent1", "John Ssekandi", "Kikandwa Village", "Mityana",
-      "+256 774 000111", "4.5", JSON.stringify(["Matooke", "Coffee", "Cassava"]),
-      "Ssekandi is a third-generation coffee and banana farmer. He has a highly productive organic farm but suffers from transport constraints.",
-      dateStr, "active"
-    );
-
-    insertFarmer.run(
-      "farm_2", "usr_agent1", "Grace Nakato", "Namutamba Rural", "Mityana",
-      "+256 781 222333", "2.0", JSON.stringify(["Tomatoes", "Onions", "Green Peppers"]),
-      "Nakato specializes in vegetable horticulture using basic gravity drip irrigation. Reliable water source but lacks market access.",
-      dateStr, "active"
-    );
-
-    insertFarmer.run(
-      "farm_3", "usr_agent2", "Yusuf Kato", "Kikyusa Village", "Luweero",
-      "+256 754 555666", "8.0", JSON.stringify(["Pineapples", "Maize"]),
-      "Kato is an experienced sweet organic pineapple farmer. Owns medium acreage, produces high-yield seasonal harvests.",
-      dateStr, "active"
-    );
-
-    // Seed products
-    const insertProduct = this.db.prepare(`
-      INSERT INTO products (id, farmer_id, farmer_name, category, name, description, price, stock, unit, images, availability, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    insertProduct.run(
-      "prod_1", "farm_1", "John Ssekandi", "Fruits & Bananas",
-      "Organic Matooke (Green Bananas)",
-      "Extra large green banana bunches. Freshly cut on demand, heavy starch, traditional cooking quality directly from Ssekandi's grove.",
-      25000, 45, "Bunch",
-      JSON.stringify(["https://images.unsplash.com/photo-1566393028639-d108a42c46a7?auto=format&fit=crop&q=80&w=600"]),
-      "immediate", dateStr
-    );
-
-    insertProduct.run(
-      "prod_2", "farm_1", "John Ssekandi", "Grains & Seeds",
-      "Arabica Coffee Beans (AA Grade)",
-      "Sun-dried organic Arabica coffee beans. Handpicked, expertly hulled, ready for roasting. Premium harvest with rich chocolatey notes.",
-      9000, 350, "kg",
-      JSON.stringify(["https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?auto=format&fit=crop&q=80&w=600"]),
-      "immediate", dateStr
-    );
-
-    insertProduct.run(
-      "prod_3", "farm_2", "Grace Nakato", "Vegetables",
-      "Fresh Vine-Ripened Tomatoes",
-      "Firm, juicy red tomatoes grown with organic compost. Handpicked at perfect maturity. Perfect for markets and restaurants.",
-      45000, 12, "Crate (25kg)",
-      JSON.stringify(["https://images.unsplash.com/photo-1595855759920-86582396756a?auto=format&fit=crop&q=80&w=600"]),
-      "immediate", dateStr
-    );
-
-    insertProduct.run(
-      "prod_4", "farm_3", "Yusuf Kato", "Fruits & Bananas",
-      "Sweet Cayenne Pineapples",
-      "Luweero's legendary honey-sweet pineapples. Large size, fragrant, thin skin and high sugar content. Organic certified.",
-      3500, 500, "Piece",
-      JSON.stringify(["https://images.unsplash.com/photo-1550258987-190a2d41a8ba?auto=format&fit=crop&q=80&w=600"]),
-      "immediate", dateStr
-    );
-
-    // Seed config
-    this.db.exec(`
-      INSERT INTO config (id, farmer_percentage, agent_percentage, platform_percentage)
-      VALUES (1, 85, 10, 5)
-    `);
-
+    await batch.commit();
+    this._config = seedData.config;
+    this.initialized = true;
     console.log("Database seeded successfully!");
   }
 
-  // Collection Accessors
-  get users(): User[] {
-    return this.db.prepare("SELECT id, name, email, password_hash as passwordHash, phone, role, verification_status as verificationStatus, created_at as createdAt FROM users").all() as User[];
+  private async ensureInitialized() {
+    if (!this.initialized) {
+      await this.seedIfEmpty();
+    }
   }
 
-  get agents(): Agent[] {
-    return this.db.prepare("SELECT user_id as userId, national_id as nationalId, service_area as serviceArea, approval_status as approvalStatus FROM agents").all() as Agent[];
+  async getUsers(): Promise<User[]> {
+    await this.ensureInitialized();
+    const db = await this.getDb();
+    const snapshot = await db.collection("users").get();
+    return snapshot.docs.map(doc => doc.data() as User);
   }
 
-  get farmers(): Farmer[] {
-    const rows = this.db.prepare(`
-      SELECT id, agent_id as agentId, name, village, location, phone, farm_size as farmSize, 
-             crop_types as cropTypes, notes, created_at as createdAt, status 
-      FROM farmers
-    `).all() as any[];
-    return rows.map(r => ({
-      ...r,
-      cropTypes: JSON.parse(r.cropTypes || '[]')
-    }));
+  async getAgents(): Promise<Agent[]> {
+    await this.ensureInitialized();
+    const db = await this.getDb();
+    const snapshot = await db.collection("agents").get();
+    return snapshot.docs.map(doc => doc.data() as Agent);
   }
 
-  get products(): Product[] {
-    const rows = this.db.prepare(`
-      SELECT id, farmer_id as farmerId, farmer_name as farmerName, category, name, description, 
-             price, stock, unit, images, availability, created_at as createdAt 
-      FROM products
-    `).all() as any[];
-    return rows.map(r => ({
-      ...r,
-      images: JSON.parse(r.images || '[]')
-    }));
+  async getFarmers(): Promise<Farmer[]> {
+    await this.ensureInitialized();
+    const db = await this.getDb();
+    const snapshot = await db.collection("farmers").get();
+    return snapshot.docs.map(doc => doc.data() as Farmer);
   }
 
-  get orders(): Order[] {
-    const orderRows = this.db.prepare(`
-      SELECT id, buyer_id as buyerId, buyer_name as buyerName, shipping_address as shippingAddress, 
-             phone, payment_status as paymentStatus, delivery_status as deliveryStatus, 
-             totals, created_at as createdAt 
-      FROM orders
-    `).all() as any[];
-
-    return orderRows.map(order => {
-      const productRows = this.db.prepare(`
-        SELECT id, order_id as orderId, product_id as productId, name, quantity, price, unit, farmer_id as farmerId, agent_id as agentId
-        FROM order_products WHERE order_id = ?
-      `).all(order.id) as any[];
-
-      return {
-        ...order,
-        products: productRows.map(p => ({
-          productId: p.productId,
-          name: p.name,
-          quantity: p.quantity,
-          price: p.price,
-          unit: p.unit,
-          farmerId: p.farmerId,
-          agentId: p.agentId
-        })),
-        totals: JSON.parse(order.totals)
-      };
-    });
+  async getProducts(): Promise<Product[]> {
+    await this.ensureInitialized();
+    const db = await this.getDb();
+    const snapshot = await db.collection("products").get();
+    return snapshot.docs.map(doc => doc.data() as Product);
   }
 
-  get reviews(): Review[] {
-    return this.db.prepare(`
-      SELECT id, buyer_id as buyerId, buyer_name as buyerName, product_id as productId, 
-             rating, comment, created_at as createdAt 
-      FROM reviews
-    `).all() as Review[];
+  async getOrders(): Promise<Order[]> {
+    await this.ensureInitialized();
+    const db = await this.getDb();
+    const snapshot = await db.collection("orders").get();
+    return snapshot.docs.map(doc => doc.data() as Order);
   }
 
-  get notifications(): Notification[] {
-    const rows = this.db.prepare(`
-      SELECT id, user_id as userId, title, message, read, created_at as createdAt 
-      FROM notifications
-    `).all() as any[];
-    return rows.map(r => ({ ...r, read: !!r.read }));
+  async getReviews(): Promise<Review[]> {
+    await this.ensureInitialized();
+    const db = await this.getDb();
+    const snapshot = await db.collection("reviews").get();
+    return snapshot.docs.map(doc => doc.data() as Review);
   }
 
-  get config(): PlatformConfig {
-    const row = this.db.prepare("SELECT farmer_percentage as farmerPercentage, agent_percentage as agentPercentage, platform_percentage as platformPercentage FROM config WHERE id = 1").get() as PlatformConfig | undefined;
-    return row || { farmerPercentage: 85, agentPercentage: 10, platformPercentage: 5 };
+  async getNotifications(): Promise<Notification[]> {
+    await this.ensureInitialized();
+    const db = await this.getDb();
+    const snapshot = await db.collection("notifications").get();
+    return snapshot.docs.map(doc => doc.data() as Notification);
   }
+
+  async getConfig(): Promise<PlatformConfig> {
+    await this.ensureInitialized();
+    return this._config;
+  }
+
+  get users(): User[] { return []; }
+  get agents(): Agent[] { return []; }
+  get farmers(): Farmer[] { return []; }
+  get products(): Product[] { return []; }
+  get orders(): Order[] { return []; }
+  get reviews(): Review[] { return []; }
+  get notifications(): Notification[] { return []; }
+
+  get config(): PlatformConfig { return this._config; }
 
   set config(val: PlatformConfig) {
-    this.db.prepare(`
-      INSERT OR REPLACE INTO config (id, farmer_percentage, agent_percentage, platform_percentage)
-      VALUES (1, ?, ?, ?)
-    `).run(val.farmerPercentage, val.agentPercentage, val.platformPercentage);
+    this._config = val;
+    this.getDb().then(db => db.collection("config").doc("default").set(val));
   }
 
-  public save() {
-    // SQLite is immediate - no need to explicitly save
+  public save() {}
+
+  async addUser(user: User) {
+    const db = await this.getDb();
+    await db.collection("users").doc(user.id).set(user);
   }
 
-  // CRUD operations for farmers
-  addFarmer(farmer: Farmer) {
-    const stmt = this.db.prepare(`
-      INSERT INTO farmers (id, agent_id, name, village, location, phone, farm_size, crop_types, notes, created_at, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
-      farmer.id, farmer.agentId, farmer.name, farmer.village, farmer.location,
-      farmer.phone, farmer.farmSize, JSON.stringify(farmer.cropTypes), farmer.notes, farmer.createdAt, farmer.status
-    );
+  async findUser(idOrEmail: string): Promise<User | undefined> {
+    await this.ensureInitialized();
+    const db = await this.getDb();
+    if (idOrEmail.includes('@')) {
+      const snapshot = await db.collection("users").where("email", "==", idOrEmail.toLowerCase()).limit(1).get();
+      if (!snapshot.empty) {
+        return snapshot.docs[0].data() as User;
+      }
+      return undefined;
+    }
+    const doc = await db.collection("users").doc(idOrEmail).get();
+    return doc.exists ? doc.data() as User : undefined;
   }
 
-  updateFarmer(id: string, updates: Partial<Farmer>) {
-    const fields: string[] = [];
-    const values: any[] = [];
+  async addAgent(agent: Agent) {
+    const db = await this.getDb();
+    await db.collection("agents").doc(agent.userId).set(agent);
+  }
+
+  async addFarmer(farmer: Farmer) {
+    const db = await this.getDb();
+    await db.collection("farmers").doc(farmer.id).set(farmer);
+  }
+
+  async updateFarmer(id: string, updates: Partial<Farmer>) {
+    const db = await this.getDb();
+    await db.collection("farmers").doc(id).update(updates);
+  }
+
+  async addProduct(product: Product) {
+    const db = await this.getDb();
+    await db.collection("products").doc(product.id).set(product);
+  }
+
+  async updateProduct(id: string, updates: Partial<Product>) {
+    const db = await this.getDb();
+    await db.collection("products").doc(id).update(updates);
+  }
+
+  async deleteProduct(id: string) {
+    const db = await this.getDb();
+    await db.collection("products").doc(id).delete();
+  }
+
+  async addOrder(order: Order) {
+    const db = await this.getDb();
+    await db.collection("orders").doc(order.id).set(order);
+  }
+
+  async addOrderProduct(orderProduct: OrderProduct & { orderId: string, id: string }) {
+    const db = await this.getDb();
+    const { orderId, ...productData } = orderProduct;
+    await db.collection("orders").doc(orderId)
+      .collection("orderProducts").doc(orderProduct.id).set(productData);
+  }
+
+  async updateOrder(id: string, updates: Partial<Order>) {
+    const db = await this.getDb();
+    await db.collection("orders").doc(id).update(updates);
+  }
+
+  async addReview(review: Review) {
+    const db = await this.getDb();
+    await db.collection("reviews").doc(review.id).set(review);
+  }
+
+  async deleteReview(id: string) {
+    const db = await this.getDb();
+    await db.collection("reviews").doc(id).delete();
+  }
+
+  async addNotification(notification: Notification) {
+    const db = await this.getDb();
+    await db.collection("notifications").doc(notification.id).set(notification);
+  }
+
+  async markNotificationRead(id: string) {
+    const db = await this.getDb();
+    await db.collection("notifications").doc(id).update({ read: true });
+  }
+
+  async markAllNotificationsRead(userId: string) {
+    const db = await this.getDb();
+    const snapshot = await db.collection("notifications")
+      .where("userId", "==", userId)
+      .where("read", "==", false)
+      .get();
     
-    if (updates.name !== undefined) { fields.push("name = ?"); values.push(updates.name); }
-    if (updates.village !== undefined) { fields.push("village = ?"); values.push(updates.village); }
-    if (updates.location !== undefined) { fields.push("location = ?"); values.push(updates.location); }
-    if (updates.phone !== undefined) { fields.push("phone = ?"); values.push(updates.phone); }
-    if (updates.farmSize !== undefined) { fields.push("farm_size = ?"); values.push(updates.farmSize); }
-    if (updates.cropTypes !== undefined) { fields.push("crop_types = ?"); values.push(JSON.stringify(updates.cropTypes)); }
-    if (updates.notes !== undefined) { fields.push("notes = ?"); values.push(updates.notes); }
-    if (updates.status !== undefined) { fields.push("status = ?"); values.push(updates.status); }
-
-    if (fields.length === 0) return;
-    
-    values.push(id);
-    this.db.prepare(`UPDATE farmers SET ${fields.join(", ")} WHERE id = ?`).run(...values);
+    const batch = db.batch();
+    snapshot.docs.forEach(doc => {
+      batch.update(doc.ref, { read: true });
+    });
+    await batch.commit();
   }
 
-  // CRUD operations for products
-  addProduct(product: Product) {
-    const stmt = this.db.prepare(`
-      INSERT INTO products (id, farmer_id, farmer_name, category, name, description, price, stock, unit, images, availability, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
-      product.id, product.farmerId, product.farmerName, product.category, product.name,
-      product.description, product.price, product.stock, product.unit, JSON.stringify(product.images),
-      product.availability, product.createdAt
-    );
+  async updateUser(id: string, updates: Partial<User>) {
+    const db = await this.getDb();
+    await db.collection("users").doc(id).update(updates);
   }
 
-  updateProduct(id: string, updates: Partial<Product>) {
-    const fields: string[] = [];
-    const values: any[] = [];
-    
-    if (updates.farmerId !== undefined) { fields.push("farmer_id = ?"); values.push(updates.farmerId); }
-    if (updates.farmerName !== undefined) { fields.push("farmer_name = ?"); values.push(updates.farmerName); }
-    if (updates.category !== undefined) { fields.push("category = ?"); values.push(updates.category); }
-    if (updates.name !== undefined) { fields.push("name = ?"); values.push(updates.name); }
-    if (updates.description !== undefined) { fields.push("description = ?"); values.push(updates.description); }
-    if (updates.price !== undefined) { fields.push("price = ?"); values.push(updates.price); }
-    if (updates.stock !== undefined) { fields.push("stock = ?"); values.push(updates.stock); }
-    if (updates.unit !== undefined) { fields.push("unit = ?"); values.push(updates.unit); }
-    if (updates.images !== undefined) { fields.push("images = ?"); values.push(JSON.stringify(updates.images)); }
-    if (updates.availability !== undefined) { fields.push("availability = ?"); values.push(updates.availability); }
-
-    if (fields.length === 0) return;
-    
-    values.push(id);
-    this.db.prepare(`UPDATE products SET ${fields.join(", ")} WHERE id = ?`).run(...values);
-  }
-
-  deleteProduct(id: string) {
-    this.db.prepare("DELETE FROM products WHERE id = ?").run(id);
-  }
-
-  // CRUD operations for orders
-  addOrder(order: Order) {
-    const stmt = this.db.prepare(`
-      INSERT INTO orders (id, buyer_id, buyer_name, shipping_address, phone, payment_status, delivery_status, totals, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
-      order.id, order.buyerId, order.buyerName, order.shippingAddress, order.phone,
-      order.paymentStatus, order.deliveryStatus, JSON.stringify(order.totals), order.createdAt
-    );
-  }
-
-  updateOrder(id: string, updates: Partial<Order>) {
-    const fields: string[] = [];
-    const values: any[] = [];
-    
-    if (updates.paymentStatus !== undefined) { fields.push("payment_status = ?"); values.push(updates.paymentStatus); }
-    if (updates.deliveryStatus !== undefined) { fields.push("delivery_status = ?"); values.push(updates.deliveryStatus); }
-    if (updates.totals !== undefined) { fields.push("totals = ?"); values.push(JSON.stringify(updates.totals)); }
-
-    if (fields.length === 0) return;
-    
-    values.push(id);
-    this.db.prepare(`UPDATE orders SET ${fields.join(", ")} WHERE id = ?`).run(...values);
-  }
-
-  // Add order product
-  addOrderProduct(orderProduct: OrderProduct & { orderId: string, id: string }) {
-    const stmt = this.db.prepare(`
-      INSERT INTO order_products (id, order_id, product_id, name, quantity, price, unit, farmer_id, agent_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
-      orderProduct.id, orderProduct.orderId, orderProduct.productId, orderProduct.name,
-      orderProduct.quantity, orderProduct.price, orderProduct.unit, orderProduct.farmerId, orderProduct.agentId
-    );
-  }
-
-  // Add review
-  addReview(review: Review) {
-    const stmt = this.db.prepare(`
-      INSERT INTO reviews (id, buyer_id, buyer_name, product_id, rating, comment, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
-      review.id, review.buyerId, review.buyerName, review.productId,
-      review.rating, review.comment, review.createdAt
-    );
-  }
-
-  deleteReview(id: string) {
-    this.db.prepare("DELETE FROM reviews WHERE id = ?").run(id);
-  }
-
-  // Add notification
-  addNotification(notification: Notification) {
-    const stmt = this.db.prepare(`
-      INSERT INTO notifications (id, user_id, title, message, read, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
-      notification.id, notification.userId, notification.title, notification.message,
-      notification.read ? 1 : 0, notification.createdAt
-    );
-  }
-
-  markNotificationRead(id: string) {
-    this.db.prepare("UPDATE notifications SET read = 1 WHERE id = ?").run(id);
-  }
-
-  markAllNotificationsRead(userId: string) {
-    this.db.prepare("UPDATE notifications SET read = 1 WHERE user_id = ?").run(userId);
-  }
-
-  // Update user verification/approval
-  updateUser(id: string, updates: Partial<User> & { approvalStatus?: string }) {
-    const fields: string[] = [];
-    const values: any[] = [];
-    
-    if (updates.verificationStatus !== undefined) { fields.push("verification_status = ?"); values.push(updates.verificationStatus); }
-    
-    if (fields.length === 0) return;
-    values.push(id);
-    this.db.prepare(`UPDATE users SET ${fields.join(", ")} WHERE id = ?`).run(...values);
-  }
-
-  updateAgentApproval(userId: string, approvalStatus: string) {
-    this.db.prepare("UPDATE agents SET approval_status = ? WHERE user_id = ?").run(approvalStatus, userId);
+  async updateAgentApproval(userId: string, approvalStatus: string) {
+    const db = await this.getDb();
+    await db.collection("agents").doc(userId).update({ approvalStatus });
   }
 }
 
-export const db = new SQLiteDb();
+export const firebaseDb = new FirebaseDb();
+export const db = firebaseDb;

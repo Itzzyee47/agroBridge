@@ -265,14 +265,14 @@ export default function Home({ products, user, setSelectedProduct }: HomeProps) 
             <Phone className="w-8 h-8 text-emerald-400" />
             <div className="text-center">
               <div className="text-xs font-semibold text-white/50 uppercase">Phone</div>
-              <a href="tel:+256772123456" className="text-sm text-emerald-400 hover:underline">+256 772 123456</a>
+              <a href="tel:+256772123456" className="text-sm text-emerald-400 hover:underline">+237 6772123456</a>
             </div>
           </div>
           <div className="flex flex-col items-center gap-3 p-6 bg-[#080B08] border border-white/5 rounded-lg">
             <MapPin className="w-8 h-8 text-emerald-400" />
             <div className="text-center">
               <div className="text-xs font-semibold text-white/50 uppercase">Office</div>
-              <div className="text-sm text-white">Kampala, Wakiso District</div>
+              <div className="text-sm text-white">Buea, Cameroon</div>
             </div>
           </div>
         </div>
