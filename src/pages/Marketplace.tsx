@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+﻿import React, { useState } from "react";
 import { Eye, X, Star } from "lucide-react";
 import { Product, User } from "../types";
 
@@ -114,7 +114,7 @@ export default function Marketplace({
 
                 <div className="pt-3 border-t border-white/5 flex items-center justify-between">
                   <div>
-                    <span className="text-base font-mono font-semibold text-emerald-400">UGX {product.price.toLocaleString()}</span>
+                    <span className="text-base font-mono font-semibold text-emerald-400">FCFA {product.price.toLocaleString()}</span>
                     <span className="text-[10px] text-white/40">/{product.unit}</span>
                     <span className="block text-[9px] text-white/30 font-medium">Stock: {product.stock} left</span>
                   </div>
@@ -169,7 +169,7 @@ export default function Marketplace({
               <span className="text-[10px] uppercase font-bold text-emerald-400 tracking-widest">{selectedProduct.category}</span>
               <h2 className="text-2xl font-serif text-white font-medium">{selectedProduct.name}</h2>
               <div className="text-xl font-mono text-emerald-400 font-semibold">
-                UGX {selectedProduct.price.toLocaleString()} <span className="text-xs text-white/40">/{selectedProduct.unit}</span>
+                FCFA {selectedProduct.price.toLocaleString()} <span className="text-xs text-white/40">/{selectedProduct.unit}</span>
               </div>
             </div>
 

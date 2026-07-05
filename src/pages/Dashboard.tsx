@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+﻿import React, { useState } from "react";
 import {
   Plus, Edit, Eye, Trash, CheckCircle, Clock, Users, DollarSign, Brain, Star
 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { User, Farmer, Order, PlatformConfig, Analytics } from "../types";
 
 interface DashboardProps {
@@ -22,7 +23,7 @@ interface DashboardProps {
   apiFetch: (endpoint: string, options?: RequestInit) => Promise<any>;
   showToast: (message: string, type?: "success" | "error") => void;
 }
-
+ 
 interface Product {
   id: string;
   name: string;
@@ -55,6 +56,7 @@ export default function Dashboard({
   apiFetch,
   showToast
 }: DashboardProps) {
+  const navigate = useNavigate();
   // Local state for Gemini AI Price Advisor
   const [aiCrop, setAiCrop] = useState("Organic Matooke (Green Bananas)");
   const [aiLocation, setAiLocation] = useState("Mityana");
@@ -217,7 +219,7 @@ export default function Dashboard({
                   <div className="flex justify-between text-xs text-white/50 mb-1">
                     <span>Farmers Payout share (85%)</span>
                     <span className="font-mono text-emerald-400">
-                      UGX {orders.reduce((sum, o) => sum + o.totals.farmerAmount, 0).toLocaleString()}
+FCFA {orders.reduce((sum, o) => sum + o.totals.farmerAmount, 0).toLocaleString()}
                     </span>
                   </div>
                   <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
@@ -229,7 +231,7 @@ export default function Dashboard({
                   <div className="flex justify-between text-xs text-white/50 mb-1">
                     <span>Your Agent Commission (10%)</span>
                     <span className="font-mono text-white font-semibold">
-                      UGX {orders.reduce((sum, o) => sum + o.totals.agentCommission, 0).toLocaleString()}
+                      FCFA {orders.reduce((sum, o) => sum + o.totals.agentCommission, 0).toLocaleString()}
                     </span>
                   </div>
                   <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
@@ -241,7 +243,7 @@ export default function Dashboard({
                   <div className="flex justify-between text-xs text-white/50 mb-1">
                     <span>Platform Maintenance Fee (5%)</span>
                     <span className="font-mono text-white/30">
-                      UGX {orders.reduce((sum, o) => sum + o.totals.platformFee, 0).toLocaleString()}
+                      FCFA {orders.reduce((sum, o) => sum + o.totals.platformFee, 0).toLocaleString()}
                     </span>
                   </div>
                   <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
@@ -253,7 +255,7 @@ export default function Dashboard({
               <div className="p-4 bg-[#080B08] border border-white/5 rounded text-center space-y-2">
                 <span className="text-[10px] text-white/40 uppercase tracking-widest block">Available Agent Cashout</span>
                 <div className="text-2xl font-mono text-emerald-400 font-bold">
-                  UGX {(orders.reduce((sum, o) => sum + o.totals.agentCommission, 0) * 0.8).toLocaleString()}
+                  FCFA {(orders.reduce((sum, o) => sum + o.totals.agentCommission, 0) * 0.8).toLocaleString()}
                 </div>
                 <button
                   onClick={() => showToast("Payout request submitted to mobile money registrar", "success")}
@@ -323,7 +325,7 @@ export default function Dashboard({
                     </span>
                   </div>
                   <div className="text-2xl font-mono text-emerald-400 font-bold">
-                    UGX {aiResult.recommendedPrice.toLocaleString()} <span className="text-xs text-white/40">/ unit</span>
+                    FCFA {aiResult.recommendedPrice.toLocaleString()} <span className="text-xs text-white/40">/ unit</span>
                   </div>
                   <p className="text-[11px] text-white/50 font-light leading-relaxed">{aiResult.explanation}</p>
 
@@ -458,7 +460,7 @@ export default function Dashboard({
                             ))}
                           </div>
                         </td>
-                        <td className="px-5 py-4 font-mono font-semibold">UGX {order.totals.total.toLocaleString()}</td>
+                        <td className="px-5 py-4 font-mono font-semibold">FCFA {order.totals.total.toLocaleString()}</td>
                         <td className="px-5 py-4">
                           <span
                             className={`px-2 py-0.5 rounded text-[10px] font-bold ${
@@ -509,21 +511,35 @@ export default function Dashboard({
         </div>
       )}
 
-      {/* ADMIN DASHBOARD FLAVOUR */}
-      {user.role === "admin" && analytics && (
-        <div className="space-y-10">
-          {/* Admin Overview Stats Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+       {/* ADMIN DASHBOARD FLAVOUR */}
+       {user.role === "admin" && analytics && (
+         <div className="space-y-10">
+           {/* Header with Review Farmers button */}
+           <div className="flex items-center justify-between gap-6 p-6 bg-[#121812] border border-white/5 rounded-xl">
+             <div>
+               <h2 className="text-2xl font-serif italic text-emerald-50">Admin Control Center</h2>
+               <p className="text-xs text-white/40">Platform overview and verification management.</p>
+             </div>
+<button
+               onClick={() => navigate("/admin/farmers")}
+               className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-black font-bold rounded flex items-center gap-2 transition-all text-xs cursor-pointer"
+             >
+               <Eye className="w-4 h-4" /> Review Farmers
+             </button>
+           </div>
+
+           {/* Admin Overview Stats Cards */}
+           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             <div className="bg-[#121812] border border-white/5 p-6 rounded-lg">
               <div className="text-[9px] text-white/30 uppercase tracking-[0.2em] mb-1">Platform Revenue</div>
-              <div className="text-3xl font-mono text-emerald-50 font-bold">UGX {analytics.totalRevenue.toLocaleString()}</div>
+              <div className="text-3xl font-mono text-emerald-50 font-bold">FCFA {analytics.totalRevenue.toLocaleString()}</div>
               <div className="text-[10px] text-white/40 mt-2">Combined orders value</div>
             </div>
 
             <div className="bg-[#121812] border border-white/5 p-6 rounded-lg">
               <div className="text-[9px] text-white/30 uppercase tracking-[0.2em] mb-1">Farmer Disbursements</div>
               <div className="text-3xl font-mono text-emerald-400 font-bold">
-                UGX {analytics.totalFarmerPayouts.toLocaleString()}
+                FCFA {analytics.totalFarmerPayouts.toLocaleString()}
               </div>
               <div className="text-[10px] text-emerald-400/80 mt-2">({config.farmerPercentage}% of volume)</div>
             </div>
@@ -531,14 +547,14 @@ export default function Dashboard({
             <div className="bg-[#121812] border border-white/5 p-6 rounded-lg">
               <div className="text-[9px] text-white/30 uppercase tracking-[0.2em] mb-1">Agent Commissions</div>
               <div className="text-3xl font-mono text-white font-bold">
-                UGX {analytics.totalAgentCommissions.toLocaleString()}
+                FCFA {analytics.totalAgentCommissions.toLocaleString()}
               </div>
               <div className="text-[10px] text-white/50 mt-2">({config.agentPercentage}% of volume)</div>
             </div>
 
             <div className="bg-[#121812] border border-white/5 p-6 rounded-lg">
               <div className="text-[9px] text-white/30 uppercase tracking-[0.2em] mb-1">Platform Operations Fee</div>
-              <div className="text-3xl font-mono text-white/50 font-bold">UGX {analytics.totalPlatformFees.toLocaleString()}</div>
+              <div className="text-3xl font-mono text-white/50 font-bold">FCFA {analytics.totalPlatformFees.toLocaleString()}</div>
               <div className="text-[10px] text-white/30 mt-2">({config.platformPercentage}% system cut)</div>
             </div>
           </div>
@@ -577,7 +593,7 @@ export default function Dashboard({
                                 <div className="text-[10px] text-white/30 font-mono">ID: {u.agentProfile.nationalId}</div>
                               </div>
                             ) : (
-                              <span className="text-white/30">—</span>
+                              <span className="text-white/30">â€”</span>
                             )}
                           </td>
                           <td className="px-5 py-4">
@@ -706,7 +722,7 @@ export default function Dashboard({
                           ))}
                         </div>
                       </td>
-                      <td className="px-5 py-4 font-mono font-semibold">UGX {order.totals.total.toLocaleString()}</td>
+                      <td className="px-5 py-4 font-mono font-semibold">FCFA {order.totals.total.toLocaleString()}</td>
                       <td className="px-5 py-4 text-right">
                         <span
                           className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[10px] font-bold ${

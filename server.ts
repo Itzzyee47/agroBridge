@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
+import cookieParser from "cookie-parser";
 import { db, User, Farmer, Product, Order, Review, Notification, PlatformConfig } from "./server/db.js";
 import authRouter, { authenticate, requireRole, AuthenticatedRequest } from "./server/auth.js";
 import aiRouter from "./server/ai.js";
@@ -10,6 +11,7 @@ dotenv.config();
 
 const app = express();
 app.use(express.json());
+app.use(cookieParser());
 
 // Enable CORS for frontend
 app.use((req, res, next) => {
@@ -66,47 +68,38 @@ app.post("/api/farmers", authenticate, requireRole(["agent"]), (req: Authenticat
     status: "active",
   };
 
-  db.farmers.push(newFarmer);
-  db.save();
+  db.addFarmer(newFarmer);
 
   res.status(201).json(newFarmer);
 });
 
 app.put("/api/farmers/:id", authenticate, requireRole(["agent"]), (req: AuthenticatedRequest, res) => {
   const user = req.user!;
-  const farmerIndex = db.farmers.findIndex(f => f.id === req.params.id && f.agentId === user.id);
+  
+  // Check if farmer exists and belongs to this agent
+  const farmer = db.farmers.find(f => f.id === req.params.id && f.agentId === user.id);
 
-  if (farmerIndex === -1) {
+  if (!farmer) {
     return res.status(404).json({ error: "Farmer not found or unauthorized" });
   }
 
-  const farmer = db.farmers[farmerIndex];
-  const { name, village, location, phone, farmSize, cropTypes, notes, status } = req.body;
-
-  if (name) farmer.name = name;
-  if (village) farmer.village = village;
-  if (location) farmer.location = location;
-  if (phone) farmer.phone = phone;
-  if (farmSize) farmer.farmSize = farmSize;
-  if (cropTypes) farmer.cropTypes = Array.isArray(cropTypes) ? cropTypes : cropTypes.split(",").map((s: string) => s.trim());
-  if (notes !== undefined) farmer.notes = notes;
-  if (status) farmer.status = status;
-
-  db.save();
-  res.json(farmer);
+  db.updateFarmer(req.params.id, req.body);
+  const updatedFarmer = db.farmers.find(f => f.id === req.params.id);
+  res.json(updatedFarmer);
 });
 
 app.delete("/api/farmers/:id", authenticate, requireRole(["agent"]), (req: AuthenticatedRequest, res) => {
   const user = req.user!;
-  const farmerIndex = db.farmers.findIndex(f => f.id === req.params.id && f.agentId === user.id);
+  
+  // Check if farmer exists and belongs to this agent
+  const farmer = db.farmers.find(f => f.id === req.params.id && f.agentId === user.id);
 
-  if (farmerIndex === -1) {
+  if (!farmer) {
     return res.status(404).json({ error: "Farmer not found or unauthorized" });
   }
 
   // Soft archive
-  db.farmers[farmerIndex].status = "archived";
-  db.save();
+  db.updateFarmer(req.params.id, { status: "archived" });
 
   res.json({ message: "Farmer archived successfully" });
 });
@@ -175,21 +168,18 @@ app.post("/api/products", authenticate, requireRole(["agent"]), (req: Authentica
     createdAt: new Date().toISOString(),
   };
 
-  db.products.push(newProduct);
-  db.save();
+  db.addProduct(newProduct);
 
   res.status(201).json(newProduct);
 });
 
 app.put("/api/products/:id", authenticate, requireRole(["agent"]), (req: AuthenticatedRequest, res) => {
   const user = req.user!;
-  const productIndex = db.products.findIndex(p => p.id === req.params.id);
+  const product = db.products.find(p => p.id === req.params.id);
 
-  if (productIndex === -1) {
+  if (!product) {
     return res.status(404).json({ error: "Product not found" });
   }
-
-  const product = db.products[productIndex];
 
   // Verify farmer belongs to this agent
   const farmer = db.farmers.find(f => f.id === product.farmerId && f.agentId === user.id);
@@ -197,37 +187,24 @@ app.put("/api/products/:id", authenticate, requireRole(["agent"]), (req: Authent
     return res.status(403).json({ error: "Unauthorized: this product is not managed by your farmers" });
   }
 
-  const { category, name, description, price, stock, unit, images, availability } = req.body;
-
-  if (category) product.category = category;
-  if (name) product.name = name;
-  if (description !== undefined) product.description = description;
-  if (price !== undefined) product.price = Number(price);
-  if (stock !== undefined) product.stock = Number(stock);
-  if (unit) product.unit = unit;
-  if (images) product.images = images;
-  if (availability) product.availability = availability;
-
-  db.save();
-  res.json(product);
+  db.updateProduct(req.params.id, req.body);
+  res.json(db.products.find(p => p.id === req.params.id));
 });
 
 app.delete("/api/products/:id", authenticate, requireRole(["agent"]), (req: AuthenticatedRequest, res) => {
   const user = req.user!;
-  const productIndex = db.products.findIndex(p => p.id === req.params.id);
+  const product = db.products.find(p => p.id === req.params.id);
 
-  if (productIndex === -1) {
+  if (!product) {
     return res.status(404).json({ error: "Product not found" });
   }
 
-  const product = db.products[productIndex];
   const farmer = db.farmers.find(f => f.id === product.farmerId && f.agentId === user.id);
   if (!farmer) {
     return res.status(403).json({ error: "Unauthorized: this product is not managed by your farmers" });
   }
 
-  db.products.splice(productIndex, 1);
-  db.save();
+  db.deleteProduct(req.params.id);
 
   res.json({ message: "Product deleted successfully" });
 });
@@ -307,7 +284,7 @@ app.post("/api/orders", authenticate, requireRole(["buyer"]), (req: Authenticate
     }
 
     // Deduct stock
-    dbProduct.stock -= item.quantity;
+    db.updateProduct(dbProduct.id, { stock: dbProduct.stock - item.quantity });
 
     const farmer = db.farmers.find(f => f.id === dbProduct.farmerId);
     if (!farmer) {
@@ -317,7 +294,10 @@ app.post("/api/orders", authenticate, requireRole(["buyer"]), (req: Authenticate
     const itemTotal = dbProduct.price * item.quantity;
     totalAmount += itemTotal;
 
+    const opId = "op_" + Math.random().toString(36).substring(2, 11);
     orderProducts.push({
+      id: opId,
+      orderId: "ord_" + Math.floor(100 + Math.random() * 900),
       productId: dbProduct.id,
       name: dbProduct.name,
       quantity: item.quantity,
@@ -327,7 +307,6 @@ app.post("/api/orders", authenticate, requireRole(["buyer"]), (req: Authenticate
       agentId: farmer.agentId,
     });
 
-    // Notify respective agent
     notificationsToCreate.push({
       id: "not_" + Math.random().toString(36).substring(2, 11),
       userId: farmer.agentId,
@@ -339,9 +318,10 @@ app.post("/api/orders", authenticate, requireRole(["buyer"]), (req: Authenticate
   }
 
   const split = commissionSplit(totalAmount, db.config);
+  const orderId = "ord_" + Math.floor(100 + Math.random() * 900);
 
   const newOrder: Order = {
-    id: "ord_" + Math.floor(100 + Math.random() * 900), // Human friendly random ID e.g. ord_534
+    id: orderId,
     buyerId: user.id,
     buyerName: user.name,
     products: orderProducts,
@@ -353,22 +333,22 @@ app.post("/api/orders", authenticate, requireRole(["buyer"]), (req: Authenticate
     createdAt: new Date().toISOString(),
   };
 
-  db.orders.push(newOrder);
+  db.addOrder(newOrder);
+  
+  orderProducts.forEach(op => {
+    db.addOrderProduct({ ...op, orderId: orderId });
+  });
 
-  // Add agent notifications
-  db.notifications.push(...notificationsToCreate);
+  notificationsToCreate.forEach(notif => db.addNotification(notif));
 
-  // Add buyer notification
-  db.notifications.push({
+  db.addNotification({
     id: "not_" + Math.random().toString(36).substring(2, 11),
     userId: user.id,
     title: "Order Placed successfully",
-    message: `Your order ${newOrder.id} of total UGX ${totalAmount.toLocaleString()} has been sent to our Agro Agents.`,
+    message: `Your order ${newOrder.id} of total FCFA ${totalAmount.toLocaleString()} has been sent to our Agro Agents.`,
     read: false,
     createdAt: new Date().toISOString(),
   });
-
-  db.save();
 
   res.status(201).json(newOrder);
 });
@@ -392,11 +372,9 @@ app.put("/api/orders/:id", authenticate, requireRole(["agent", "admin"]), (req: 
     }
   }
 
-  if (deliveryStatus) order.deliveryStatus = deliveryStatus;
-  if (paymentStatus) order.paymentStatus = paymentStatus;
+  db.updateOrder(req.params.id, { deliveryStatus, paymentStatus });
 
-  // Add notification to buyer
-  db.notifications.push({
+  db.addNotification({
     id: "not_" + Math.random().toString(36).substring(2, 11),
     userId: order.buyerId,
     title: `Order Status Updated`,
@@ -405,8 +383,7 @@ app.put("/api/orders/:id", authenticate, requireRole(["agent", "admin"]), (req: 
     createdAt: new Date().toISOString(),
   });
 
-  db.save();
-  res.json(order);
+  res.json(db.orders.find(o => o.id === req.params.id));
 });
 
 // ----------------------------------------------------
@@ -440,19 +417,17 @@ app.post("/api/reviews", authenticate, requireRole(["buyer"]), (req: Authenticat
     createdAt: new Date().toISOString(),
   };
 
-  db.reviews.push(newReview);
-  db.save();
+  db.addReview(newReview);
 
   res.status(201).json(newReview);
 });
 
 app.delete("/api/reviews/:id", authenticate, requireRole(["admin"]), (req, res) => {
-  const index = db.reviews.findIndex(r => r.id === req.params.id);
-  if (index === -1) {
+  const exists = db.reviews.some(r => r.id === req.params.id);
+  if (!exists) {
     return res.status(404).json({ error: "Review not found" });
   }
-  db.reviews.splice(index, 1);
-  db.save();
+  db.deleteReview(req.params.id);
   res.json({ message: "Review deleted successfully" });
 });
 
@@ -471,19 +446,13 @@ app.put("/api/notifications/:id/read", authenticate, (req: AuthenticatedRequest,
   if (!notification) {
     return res.status(404).json({ error: "Notification not found" });
   }
-  notification.read = true;
-  db.save();
-  res.json(notification);
+  db.markNotificationRead(req.params.id);
+  res.json({ ...notification, read: true });
 });
 
 app.post("/api/notifications/read-all", authenticate, (req: AuthenticatedRequest, res) => {
   const user = req.user!;
-  db.notifications.forEach(n => {
-    if (n.userId === user.id) {
-      n.read = true;
-    }
-  });
-  db.save();
+  db.markAllNotificationsRead(user.id);
   res.json({ message: "All notifications marked as read" });
 });
 
@@ -536,17 +505,15 @@ app.post("/api/admin/config", authenticate, requireRole(["admin"]), (req, res) =
     return res.status(400).json({ error: "Sum of percentages must equal exactly 100" });
   }
 
-  db.config = {
+db.config = {
     farmerPercentage: Number(farmerPercentage),
     agentPercentage: Number(agentPercentage),
     platformPercentage: Number(platformPercentage),
   };
 
-  db.save();
-
   // Create a system-wide notification for agents about change
   db.users.filter(u => u.role === "agent").forEach(agent => {
-    db.notifications.push({
+    db.addNotification({
       id: "not_" + Math.random().toString(36).substring(2, 11),
       userId: agent.id,
       title: "Platform Split Adjusted",
@@ -555,7 +522,6 @@ app.post("/api/admin/config", authenticate, requireRole(["admin"]), (req, res) =
       createdAt: new Date().toISOString(),
     });
   });
-  db.save();
 
   res.json(db.config);
 });
@@ -575,33 +541,28 @@ app.get("/api/admin/users", authenticate, requireRole(["admin"]), (req, res) => 
 
 app.put("/api/admin/users/:id", authenticate, requireRole(["admin"]), (req, res) => {
   const { verificationStatus, approvalStatus } = req.body;
+
   const user = db.users.find(u => u.id === req.params.id);
 
   if (!user) {
     return res.status(404).json({ error: "User not found" });
   }
 
-  if (verificationStatus) {
-    user.verificationStatus = verificationStatus;
-  }
+  db.updateUser(req.params.id, { verificationStatus });
 
   // Handle agent profile approvalStatus
   if (user.role === "agent") {
-    const agentProfile = db.agents.find(a => a.userId === user.id);
-    if (agentProfile) {
-      if (approvalStatus) {
-        agentProfile.approvalStatus = approvalStatus;
-        if (approvalStatus === "approved") {
-          user.verificationStatus = "verified";
-        } else if (approvalStatus === "rejected") {
-          user.verificationStatus = "pending";
-        }
+    if (approvalStatus) {
+      db.updateAgentApproval(user.id, approvalStatus);
+      if (approvalStatus === "approved") {
+        db.updateUser(user.id, { verificationStatus: "verified" });
+      } else if (approvalStatus === "rejected") {
+        db.updateUser(user.id, { verificationStatus: "pending" });
       }
     }
   }
 
-  db.save();
-  res.json(user);
+  res.json(db.users.find(u => u.id === req.params.id));
 });
 
 // ----------------------------------------------------

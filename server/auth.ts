@@ -57,11 +57,9 @@ export function verifyToken(token: string): any | null {
 export function authenticate(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   let token = "";
 
-  // 1. Try to extract from cookie
-  const cookieHeader = req.headers.cookie || "";
-  const match = cookieHeader.match(/token=([^;]+)/);
-  if (match) {
-    token = match[1];
+  // 1. Try to extract from cookie (using cookie-parser)
+  if (req.cookies && req.cookies.token) {
+    token = req.cookies.token;
   }
 
   // 2. Try to extract from Authorization header
@@ -184,6 +182,7 @@ authRouter.post("/register", (req: Request, res: Response) => {
 
     // Set cookie
     res.cookie("token", token, {
+      path: "/",
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       maxAge: 24 * 60 * 60 * 1000, // 1 day
@@ -233,6 +232,7 @@ authRouter.post("/login", (req: Request, res: Response) => {
     const token = signToken({ id: user.id, role: user.role });
 
     res.cookie("token", token, {
+      path: "/",
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
       maxAge: 24 * 60 * 60 * 1000,
@@ -257,15 +257,22 @@ authRouter.post("/login", (req: Request, res: Response) => {
   }
 });
 
-// 3. LOGOUT
+// 3. ME
+authRouter.get("/me", authenticate, (req: AuthenticatedRequest, res) => {
+  const user = req.user!;
+  const token = signToken({ id: user.id, role: user.role });
+  res.json({
+    user,
+    token,
+  });
+});
+
+// 4. LOGOUT
 authRouter.post("/logout", (req: Request, res: Response) => {
-  res.clearCookie("token");
+  res.clearCookie("token", { path: "/" });
   res.json({ message: "Logout successful" });
 });
 
-// 4. GET CURRENT USER (ME)
-authRouter.get("/me", authenticate, (req: AuthenticatedRequest, res: Response) => {
-  res.json({ user: req.user });
-});
+// NOTE: /me is already defined above and returns the authenticated user.
 
 export default authRouter;

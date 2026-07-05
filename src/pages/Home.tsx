@@ -1,17 +1,60 @@
-import React from "react";
+﻿import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Leaf, ShoppingBag, Users, Brain, DollarSign, ChevronRight, Sprout } from "lucide-react";
+import { Leaf, ShoppingBag, Users, Brain, DollarSign, ChevronRight, Sprout, MessageSquare, HelpCircle, Mail, Phone, MapPin } from "lucide-react";
 import { Product, User } from "../types";
 
 interface HomeProps {
   products: Product[];
   user: User | null;
-  demoSignIn: (role: "admin" | "agent" | "buyer") => Promise<void>;
   setSelectedProduct: (product: Product | null) => void;
 }
 
-export default function Home({ products, user, demoSignIn, setSelectedProduct }: HomeProps) {
+const testimonials = [
+  {
+    id: 1,
+    name: "Dr. Samuel Okello",
+    role: "Agricultural Economist",
+    content: "AgroBridge fills a critical gap in Uganda's agricultural value chain. By connecting rural farmers to urban markets through verified agents, they're increasing farm-gate prices by up to 40%.",
+    avatar: "SO"
+  },
+  {
+    id: 2,
+    name: "Grace Nakato",
+    role: "Verified Farmer",
+    content: "As a vegetable farmer in Mityana, AgroBridge helped me reach customers in Kampala who value fresh, organic produce. My income has doubled since joining.",
+    avatar: "GN"
+  },
+  {
+    id: 3,
+    name: "Peter Nsubuga",
+    role: "Agro Agent",
+    content: "The agent model works perfectly - I can serve 15+ farmers in my community while earning commissions. The AI price predictions help my farmers maximize their profits.",
+    avatar: "PN"
+  }
+];
+
+const faqs = [
+  {
+    question: "How does AgroBridge work?",
+    answer: "Agro Agents register smallholder farmers in their communities, catalogue their crops, and manage orders. Buyers can purchase directly from the platform and agents handle logistics."
+  },
+  {
+    question: "What percentage do farmers receive?",
+    answer: "Farmers receive 85% of the total sale price. The remaining 15% covers agent commissions (10%) and platform maintenance (5%)."
+  },
+  {
+    question: "How do I become an Agro Agent?",
+    answer: "Register with your details and service area. Once approved by admin, you can start registering farmers and managing their produce listings."
+  },
+  {
+    question: "What types of produce are available?",
+    answer: "We feature seasonal crops including Matooke (bananas), coffee, tomatoes, pineapples, and other organic vegetables and fruits from verified farmers."
+  }
+];
+
+export default function Home({ products, user, setSelectedProduct }: HomeProps) {
   const navigate = useNavigate();
+  const [openFaq, setOpenFaq] = useState<number | null>(null);
 
   return (
     <div id="home_tab" className="space-y-16">
@@ -30,17 +73,17 @@ export default function Home({ products, user, demoSignIn, setSelectedProduct }:
           </p>
           <div className="pt-4 flex flex-wrap justify-center gap-4">
             <button
-              onClick={() => navigate("/marketplace")}
+              onClick={() => navigate("/products")}
               className="px-8 py-3.5 bg-emerald-500 hover:bg-emerald-600 text-black font-bold rounded shadow-lg shadow-emerald-500/10 transition-all text-sm flex items-center gap-2 cursor-pointer"
             >
-              <ShoppingBag className="w-4 h-4" /> Browse Food Marketplace
+              <ShoppingBag className="w-4 h-4" /> Browse All Products
             </button>
-            {!user && (
+{!user && (
               <button
-                onClick={() => demoSignIn("agent")}
+                onClick={() => navigate("/auth/login")}
                 className="px-8 py-3.5 bg-white/5 hover:bg-white/10 text-white font-semibold rounded border border-white/10 transition-all text-sm cursor-pointer"
               >
-                Access as Agent Demo
+                Sign In / Register
               </button>
             )}
           </div>
@@ -80,12 +123,32 @@ export default function Home({ products, user, demoSignIn, setSelectedProduct }:
         </div>
       </div>
 
+      {/* Statistics Section */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+        <div className="text-center p-6 bg-[#121812] border border-white/5 rounded-xl">
+          <div className="text-3xl font-mono text-emerald-400 font-bold">70%+</div>
+          <div className="text-[10px] uppercase tracking-wider text-white/40">Smallholder Farmers Served</div>
+        </div>
+        <div className="text-center p-6 bg-[#121812] border border-white/5 rounded-xl">
+          <div className="text-3xl font-mono text-emerald-400 font-bold">40%</div>
+          <div className="text-[10px] uppercase tracking-wider text-white/40">Average Price Increase</div>
+        </div>
+        <div className="text-center p-6 bg-[#121812] border border-white/5 rounded-xl">
+          <div className="text-3xl font-mono text-emerald-400 font-bold">150+</div>
+          <div className="text-[10px] uppercase tracking-wider text-white/40">Verified Agents</div>
+        </div>
+        <div className="text-center p-6 bg-[#121812] border border-white/5 rounded-xl">
+          <div className="text-3xl font-mono text-emerald-400 font-bold">FCFA 50M+</div>
+          <div className="text-[10px] uppercase tracking-wider text-white/40">Farmer Payouts</div>
+        </div>
+      </div>
+
       {/* Featured Catalog Preview */}
       <div className="space-y-6">
         <div className="flex items-center justify-between border-b border-white/5 pb-4">
           <h2 className="text-2xl font-serif italic text-emerald-50 font-medium">Seasonal Crop Highlight</h2>
           <button
-            onClick={() => navigate("/marketplace")}
+            onClick={() => navigate("/products")}
             className="text-xs text-emerald-400 font-bold tracking-wider uppercase hover:underline flex items-center gap-1 cursor-pointer"
           >
             View Full Catalog <ChevronRight className="w-4 h-4" />
@@ -108,20 +171,110 @@ export default function Home({ products, user, demoSignIn, setSelectedProduct }:
                 </div>
                 <div className="pt-2 border-t border-white/5 flex items-center justify-between">
                   <div>
-                    <span className="block text-[8px] uppercase tracking-wider text-white/30">Farm Price</span>
-                    <span className="text-sm font-mono font-semibold text-emerald-400">UGX {product.price.toLocaleString()}</span>
-                    <span className="text-[10px] text-white/40"> / {product.unit}</span>
+                    <span className="text-[10px] uppercase font-semibold text-white/30">Price:</span>
+                    <span className="block font-mono text-emerald-400">FCFA {product.price.toLocaleString()}</span>
+                    <span className="text-[9px] text-white/30 font-medium">/ {product.unit}</span>
                   </div>
                   <button
-                    onClick={() => { setSelectedProduct(product); navigate("/marketplace"); }}
+                    onClick={() => { setSelectedProduct(product); navigate("/products"); }}
                     className="px-2.5 py-1.5 bg-white/5 hover:bg-emerald-500 hover:text-black rounded text-[10px] font-bold transition-all cursor-pointer"
                   >
-                    Details
+                    View Details
                   </button>
                 </div>
               </div>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Testimonials Section */}
+      <div className="space-y-8">
+        <div className="text-center space-y-2">
+          <h2 className="text-3xl font-serif italic text-emerald-50 font-medium">What Our Users Say</h2>
+          <p className="text-xs text-white/40">Stories from farmers, agents, and partners across Uganda.</p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {testimonials.map(testimonial => (
+            <div key={testimonial.id} className="bg-[#121812] border border-white/5 p-6 rounded-xl space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-emerald-950/50 border border-emerald-500/20 flex items-center justify-center font-bold text-emerald-400 text-xs">
+                  {testimonial.avatar}
+                </div>
+                <div>
+                  <div className="text-sm font-semibold text-white">{testimonial.name}</div>
+                  <div className="text-[10px] text-white/40">{testimonial.role}</div>
+                </div>
+              </div>
+              <p className="text-xs text-white/60 leading-relaxed italic">"{testimonial.content}"</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* FAQ Section */}
+      <div className="space-y-8">
+        <div className="text-center space-y-2">
+          <div className="flex items-center justify-center gap-2 text-emerald-400">
+            <HelpCircle className="w-5 h-5" />
+            <h2 className="text-3xl font-serif italic text-emerald-50 font-medium">Frequently Asked Questions</h2>
+          </div>
+          <p className="text-xs text-white/40">Everything you need to know about AgroBridge.</p>
+        </div>
+        <div className="space-y-4 max-w-3xl mx-auto">
+          {faqs.map((faq, idx) => (
+            <div key={idx} className="bg-[#121812] border border-white/5 rounded-lg overflow-hidden">
+              <button
+                onClick={() => setOpenFaq(openFaq === idx ? null : idx)}
+                className="w-full p-4 text-left flex items-center justify-between hover:bg-white/5 transition-colors"
+              >
+                <span className="text-sm font-semibold text-white">{faq.question}</span>
+                <span className={`text-emerald-400 transition-transform ${openFaq === idx ? "rotate-180" : ""}`}>
+                  â–¼
+                </span>
+              </button>
+              {openFaq === idx && (
+                <div className="p-4 border-t border-white/5">
+                  <p className="text-xs text-white/50">{faq.answer}</p>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Contact Section */}
+      <div className="space-y-8 bg-[#121812] border border-white/5 rounded-2xl p-8 sm:p-12">
+        <div className="text-center space-y-2">
+          <div className="flex items-center justify-center gap-2 text-emerald-400">
+            <MessageSquare className="w-5 h-5" />
+            <h2 className="text-3xl font-serif italic text-emerald-50 font-medium">Contact Us</h2>
+          </div>
+          <p className="text-xs text-white/40">Have questions? Reach out to our team.</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="flex flex-col items-center gap-3 p-6 bg-[#080B08] border border-white/5 rounded-lg">
+            <Mail className="w-8 h-8 text-emerald-400" />
+            <div className="text-center">
+              <div className="text-xs font-semibold text-white/50 uppercase">Email</div>
+              <a href="mailto:info@agrobridge.com" className="text-sm text-emerald-400 hover:underline">info@agrobridge.com</a>
+            </div>
+          </div>
+          <div className="flex flex-col items-center gap-3 p-6 bg-[#080B08] border border-white/5 rounded-lg">
+            <Phone className="w-8 h-8 text-emerald-400" />
+            <div className="text-center">
+              <div className="text-xs font-semibold text-white/50 uppercase">Phone</div>
+              <a href="tel:+256772123456" className="text-sm text-emerald-400 hover:underline">+256 772 123456</a>
+            </div>
+          </div>
+          <div className="flex flex-col items-center gap-3 p-6 bg-[#080B08] border border-white/5 rounded-lg">
+            <MapPin className="w-8 h-8 text-emerald-400" />
+            <div className="text-center">
+              <div className="text-xs font-semibold text-white/50 uppercase">Office</div>
+              <div className="text-sm text-white">Kampala, Wakiso District</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

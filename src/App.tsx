@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from "react";
+﻿import React, { useState, useEffect } from "react";
 import { BrowserRouter, Routes, Route, Link, useNavigate, useLocation } from "react-router-dom";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   Sprout, ShoppingCart, LogOut, CheckCircle, Clock, Trash, X, AlertTriangle, Leaf
 } from "lucide-react";
@@ -9,14 +10,23 @@ import Home from "./pages/Home";
 import Marketplace from "./pages/Marketplace";
 import Dashboard from "./pages/Dashboard";
 import About from "./pages/About";
+import Products from "./pages/Products";
+import FarmerManagement from "./pages/FarmerManagement";
+import FarmerVerification from "./pages/Admin/FarmerVerification";
+import Login from "./pages/Auth/Login";
+import Register from "./pages/Auth/Register";
 
 function AgroBridgeApp() {
   const navigate = useNavigate();
   const location = useLocation();
+  const getStoredToken = () => {
+    if (typeof window === "undefined") return "";
+    return window.localStorage.getItem("agrobridge_token") || "";
+  };
 
   // Navigation & User Session State
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string>("");
+  const [token, setToken] = useState<string>(getStoredToken);
   const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
   // Core Data Lists
@@ -49,18 +59,62 @@ function AgroBridgeApp() {
     setTimeout(() => setToast(null), 4000);
   };
 
+  const getAuthToken = () => token || getStoredToken();
+
   // 2. Fetch Helper with token
   const apiFetch = async (endpoint: string, options: RequestInit = {}) => {
-    const headers = {
+    const authToken = getAuthToken();
+    const authHeaders = {
       "Content-Type": "application/json",
-      ...(token ? { "Authorization": `Bearer ${token}` } : {})
+      ...(authToken ? { "Authorization": `Bearer ${authToken}` } : {})
     };
-    const res = await fetch(endpoint, { ...options, headers });
+    const mergedHeaders = {
+      ...((options.headers as Record<string, string>) || {}),
+      ...authHeaders,
+    };
+
+    const res = await fetch(endpoint, { ...options, headers: mergedHeaders, credentials: "include" });
     const data = await res.json();
     if (!res.ok) {
       throw new Error(data.error || "Something went wrong");
     }
     return data;
+  };
+
+  const restoreSession = async () => {
+    const storedToken = getStoredToken();
+    // If no token stored, skip the API call entirely
+    if (!storedToken) {
+      return;
+    }
+    try {
+      const res = await fetch("/api/auth/me", {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${storedToken}`,
+        },
+        credentials: "include",
+      });
+      if (!res.ok) {
+        setToken("");
+        setUser(null);
+        window.localStorage.removeItem("agrobridge_token");
+        return;
+      }
+      const data = await res.json();
+      if (data?.user) {
+        setUser(data.user);
+      }
+      if (data?.token) {
+        setToken(data.token);
+        window.localStorage.setItem("agrobridge_token", data.token);
+      }
+    } catch (err) {
+      console.error("Session restore failed:", err);
+      setToken("");
+      setUser(null);
+      window.localStorage.removeItem("agrobridge_token");
+    }
   };
 
   // 3. Load initial data
@@ -103,40 +157,21 @@ function AgroBridgeApp() {
 
   useEffect(() => {
     loadMarketData();
+    restoreSession();
   }, []);
 
   useEffect(() => {
-    if (token) {
+    if (token && user) {
       loadAuthData();
     }
   }, [token, user]);
 
-  // Demo Fast SignIn
-  const demoSignIn = async (role: "admin" | "agent" | "buyer") => {
+const handleLogout = async () => {
     try {
-      const credentials = {
-        admin: { email: "admin@agrobridge.com", password: "admin123" },
-        agent: { email: "agent1@agrobridge.com", password: "agent123" },
-        buyer: { email: "buyer@agrobridge.com", password: "buyer123" }
-      };
-      const data = await apiFetch("/api/auth/login", {
-        method: "POST",
-        body: JSON.stringify(credentials[role])
-      });
-      setToken(data.token);
-      setUser(data.user);
-      showToast(`Welcome back, ${data.user.name}! Logged in as ${role.toUpperCase()}`, "success");
-      navigate("/dashboard");
-    } catch (e: any) {
-      showToast(e.message, "error");
-    }
-  };
-
-  const handleLogout = async () => {
-    try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
       setUser(null);
       setToken("");
+      window.localStorage.removeItem("agrobridge_token");
       setCart([]);
       setOrders([]);
       navigate("/");
@@ -144,6 +179,7 @@ function AgroBridgeApp() {
     } catch (e) {
       setUser(null);
       setToken("");
+      window.localStorage.removeItem("agrobridge_token");
     }
   };
 
@@ -323,14 +359,13 @@ function AgroBridgeApp() {
               )}
             </button>
 
-            {/* Quick Demo Selector */}
-            {!user ? (
-              <div className="flex items-center gap-1.5 bg-emerald-950/20 p-1 border border-emerald-900/30 rounded">
-                <span className="text-[10px] uppercase font-bold tracking-wider text-emerald-400/80 px-2 hidden lg:inline">Demo Access:</span>
-                <button onClick={() => demoSignIn("buyer")} className="text-xs px-2.5 py-1 bg-white/5 hover:bg-emerald-500 hover:text-black rounded transition-all font-medium cursor-pointer">Buyer</button>
-                <button onClick={() => demoSignIn("agent")} className="text-xs px-2.5 py-1 bg-white/5 hover:bg-emerald-500 hover:text-black rounded transition-all font-medium cursor-pointer">Agent</button>
-                <button onClick={() => demoSignIn("admin")} className="text-xs px-2.5 py-1 bg-white/5 hover:bg-emerald-500 hover:text-black rounded transition-all font-medium cursor-pointer">Admin</button>
-              </div>
+{!user ? (
+              <button
+                onClick={() => navigate("/auth/login")}
+                className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-black font-semibold text-xs rounded flex items-center gap-2 transition-all cursor-pointer"
+              >
+                Sign In / Register
+              </button>
             ) : (
               <div className="flex items-center gap-4">
                 <div className="hidden lg:block text-right">
@@ -346,68 +381,189 @@ function AgroBridgeApp() {
         </div>
       </header>
 
-      {/* Main Area Container */}
+{/* Main Area Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
-        <Routes>
-          <Route path="/" element={
-            <Home
-              products={products}
-              user={user}
-              demoSignIn={demoSignIn}
-              setSelectedProduct={setSelectedProduct}
-            />
-          } />
-          <Route path="/marketplace" element={
-            <Marketplace
-              products={products}
-              selectedProduct={selectedProduct}
-              setSelectedProduct={setSelectedProduct}
-              cart={cart}
-              setCart={setCart}
-              user={user}
-              showToast={showToast}
-              onSubmitReview={submitReview}
-            />
-          } />
-          <Route path="/dashboard" element={
+        <AnimatePresence mode="wait">
+          <Routes>
+<Route path="/" element={
+               <motion.div
+                 initial={{ opacity: 0, x: -20 }}
+                 animate={{ opacity: 1, x: 0 }}
+                 exit={{ opacity: 0, x: 20 }}
+                 transition={{ duration: 0.3 }}
+               >
+                 <Home
+                   products={products}
+                   user={user}
+                   setSelectedProduct={setSelectedProduct}
+                 />
+               </motion.div>
+             } />
+            <Route path="/marketplace" element={
+              <motion.div
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                transition={{ duration: 0.3 }}
+              >
+                <Marketplace
+                  products={products}
+                  selectedProduct={selectedProduct}
+                  setSelectedProduct={setSelectedProduct}
+                  cart={cart}
+                  setCart={setCart}
+                  user={user}
+                  showToast={showToast}
+                  onSubmitReview={submitReview}
+                />
+              </motion.div>
+            } />
+            <Route path="/products" element={
+              <motion.div
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                transition={{ duration: 0.3 }}
+              >
+                <Products
+                  products={products}
+                  cart={cart}
+                  setCart={setCart}
+                  showToast={showToast}
+                  apiFetch={apiFetch}
+                />
+              </motion.div>
+            } />
+            <Route path="/auth/login" element={
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3 }}
+              >
+                <Login apiFetch={apiFetch} showToast={showToast} />
+              </motion.div>
+            } />
+            <Route path="/auth/register" element={
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3 }}
+              >
+                <Register apiFetch={apiFetch} showToast={showToast} />
+              </motion.div>
+            } />
+            <Route path="/farmers" element={
+              user?.role === "agent" ? (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <FarmerManagement
+                    farmers={farmers}
+                    setFarmerForm={setFarmerForm}
+                    setShowFarmerModal={setShowFarmerModal}
+                    apiFetch={apiFetch}
+                    showToast={showToast}
+                  />
+                </motion.div>
+              ) : (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <div className="py-20 text-center">Access denied. Agents only.</div>
+                </motion.div>
+              )
+            } />
+            <Route path="/admin/farmers" element={
+              user?.role === "admin" ? (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <FarmerVerification apiFetch={apiFetch} showToast={showToast} />
+                </motion.div>
+              ) : (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <div className="py-20 text-center">Access denied. Admin only.</div>
+                </motion.div>
+              )
+            } />
+<Route path="/dashboard" element={
             user ? (
-              <Dashboard
-                user={user}
-                farmers={farmers}
-                orders={orders}
-                adminUsers={adminUsers}
-                analytics={analytics}
-                config={config}
-                setConfig={setConfig}
-                updateSplitConfig={updateSplitConfig}
-                updateAgentStatus={updateAgentStatus}
-                updateOrderStatus={updateOrderStatus}
-                setFarmerForm={setFarmerForm}
-                setShowFarmerModal={setShowFarmerModal}
-                setProductForm={setProductForm}
-                setShowProductModal={setShowProductModal}
-                apiFetch={apiFetch}
-                showToast={showToast}
-              />
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3 }}
+              >
+                <Dashboard
+                  user={user}
+                  farmers={farmers}
+                  orders={orders}
+                  adminUsers={adminUsers}
+                  analytics={analytics}
+                  config={config}
+                  setConfig={setConfig}
+                  updateSplitConfig={updateSplitConfig}
+                  updateAgentStatus={updateAgentStatus}
+                  updateOrderStatus={updateOrderStatus}
+                  setFarmerForm={setFarmerForm}
+                  setShowFarmerModal={setShowFarmerModal}
+                  setProductForm={setProductForm}
+                  setShowProductModal={setShowProductModal}
+                  apiFetch={apiFetch}
+                  showToast={showToast}
+                />
+              </motion.div>
             ) : (
-              <div className="py-20 text-center max-w-md mx-auto space-y-4">
-                <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto text-emerald-400">
-                  <Leaf className="w-8 h-8" />
-                </div>
-                <h2 className="text-2xl font-serif italic text-emerald-50 font-medium">Dashboard Restricted</h2>
-                <p className="text-sm text-white/50 leading-relaxed">
-                  Please sign in using one of the quick **Demo Access** buttons in the navigation header to explore role-specific features.
-                </p>
-                <div className="pt-2 flex justify-center gap-3">
-                  <button onClick={() => demoSignIn("buyer")} className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-black font-semibold text-xs rounded cursor-pointer">As Buyer</button>
-                  <button onClick={() => demoSignIn("agent")} className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-black font-semibold text-xs rounded cursor-pointer">As Agent</button>
-                  <button onClick={() => demoSignIn("admin")} className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-black font-semibold text-xs rounded cursor-pointer">As Admin</button>
-                </div>
-              </div>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.3 }}
+              >
+<div className="py-20 text-center max-w-md mx-auto space-y-4">
+                    <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mx-auto text-emerald-400">
+                      <Leaf className="w-8 h-8" />
+                    </div>
+                    <h2 className="text-2xl font-serif italic text-emerald-50 font-medium">Dashboard Restricted</h2>
+                    <p className="text-sm text-white/50 leading-relaxed">
+                      Please sign in to access your personalized dashboard. Agents and Admins must register and await approval.
+                    </p>
+                    <div className="pt-2 flex justify-center gap-3">
+                      <button onClick={() => navigate("/auth/login")} className="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-black font-semibold text-xs rounded cursor-pointer">Sign In</button>
+                      <button onClick={() => navigate("/auth/register")} className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white font-semibold text-xs rounded cursor-pointer">Register</button>
+                    </div>
+                  </div>
+              </motion.div>
             )
           } />
-          <Route path="/about" element={<About />} />
-        </Routes>
+            <Route path="/about" element={
+              <motion.div
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 20 }}
+                transition={{ duration: 0.3 }}
+              >
+                <About />
+              </motion.div>
+            } />
+          </Routes>
+        </AnimatePresence>
       </main>
 
       {/* Cart Slider / Drawer overlay */}
@@ -431,7 +587,7 @@ function AgroBridgeApp() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="font-bold text-white truncate">{item.product.name}</div>
-                    <div className="text-xs text-white/40 mt-0.5">UGX {item.product.price.toLocaleString()} / {item.product.unit}</div>
+                    <div className="text-xs text-white/40 mt-0.5">FCFA {item.product.price.toLocaleString()} / {item.product.unit}</div>
 
                     <div className="flex items-center gap-2 mt-2">
                       <button onClick={() => {
@@ -467,19 +623,19 @@ function AgroBridgeApp() {
                   <span className="text-[9px] uppercase tracking-wider text-emerald-400 font-bold block mb-1">Expected Financial Splits:</span>
                   <div className="flex justify-between text-white/50">
                     <span>Farmer Payout (85%)</span>
-                    <span className="font-mono text-emerald-400">UGX {(cart.reduce((sum, i) => sum + (i.product.price * i.quantity), 0) * 0.85).toLocaleString()}</span>
+                    <span className="font-mono text-emerald-400">FCFA {(cart.reduce((sum, i) => sum + (i.product.price * i.quantity), 0) * 0.85).toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between text-white/50">
                     <span>Agent Commission (10%)</span>
-                    <span className="font-mono">UGX {(cart.reduce((sum, i) => sum + (i.product.price * i.quantity), 0) * 0.10).toLocaleString()}</span>
+                    <span className="font-mono">FCFA {(cart.reduce((sum, i) => sum + (i.product.price * i.quantity), 0) * 0.10).toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between text-white/50">
                     <span>Platform Fee (5%)</span>
-                    <span className="font-mono">UGX {(cart.reduce((sum, i) => sum + (i.product.price * i.quantity), 0) * 0.05).toLocaleString()}</span>
+                    <span className="font-mono">FCFA {(cart.reduce((sum, i) => sum + (i.product.price * i.quantity), 0) * 0.05).toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between border-t border-white/5 pt-2 text-sm font-semibold text-white">
                     <span>Total Bill:</span>
-                    <span className="font-mono text-emerald-400">UGX {cart.reduce((sum, i) => sum + (i.product.price * i.quantity), 0).toLocaleString()}</span>
+                    <span className="font-mono text-emerald-400">FCFA {cart.reduce((sum, i) => sum + (i.product.price * i.quantity), 0).toLocaleString()}</span>
                   </div>
                 </div>
 
@@ -607,7 +763,7 @@ function AgroBridgeApp() {
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-white/50 mb-1">Price (UGX)</label>
+                  <label className="block text-white/50 mb-1">Price (FCFA)</label>
                   <input required type="number" value={productForm.price || ""} onChange={(e) => setProductForm({...productForm, price: Number(e.target.value)})} className="w-full bg-[#080B08] border border-white/10 rounded px-3 py-2 text-white focus:outline-none" />
                 </div>
                 <div>
@@ -652,7 +808,7 @@ function AgroBridgeApp() {
         <div className="flex justify-center items-center gap-2 text-emerald-400 font-bold">
           <Sprout className="w-4 h-4" /> AgroBridge System Ecosystem
         </div>
-        <p>© 2026 AgroBridge Inc. All rights reserved. Registered proxies operating under Wakiso Cooperative grids.</p>
+        <p>Â© 2026 AgroBridge Inc. All rights reserved. Registered proxies operating under Wakiso Cooperative grids.</p>
         <p className="font-mono text-[10px]">Real-time AI Grounding utilizing Google Gemini-3.5-Flash capabilities.</p>
       </footer>
     </div>
