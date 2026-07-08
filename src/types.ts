@@ -66,9 +66,11 @@ export interface Order {
     agentCommission: number;
     platformFee: number;
     total: number;
+    deliveryFee?: number;
   };
   shippingAddress: string;
   phone: string;
+  deliveryPreference: "delivery" | "pickup";
   createdAt: string;
 }
 

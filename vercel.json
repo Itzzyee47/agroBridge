@@ -11,9 +11,17 @@
     {
       "src": "api/index.ts",
       "use": "@vercel/node"
+    },
+    {
+      "src": "api/upload.ts",
+      "use": "@vercel/node"
     }
   ],
   "routes": [
+    {
+      "src": "/api/upload",
+      "dest": "/api/upload.ts"
+    },
     {
       "src": "/api/(.*)",
       "dest": "/api/index.ts"

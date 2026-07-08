@@ -157,7 +157,7 @@ export const seedData = {
   ],
   config: {
     farmerPercentage: 85,
-    agentPercentage: 10,
-    platformPercentage: 5,
+    agentPercentage: 7,
+    platformPercentage: 3,
   },
 };

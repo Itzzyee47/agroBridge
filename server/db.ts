@@ -76,9 +76,11 @@ export interface Order {
     farmerAmount: number;
     agentCommission: number;
     platformFee: number;
+    deliveryFee: number;
     total: number;
   };
   shippingAddress: string;
+  deliveryPreference: string;
   phone: string;
   createdAt: string;
 }

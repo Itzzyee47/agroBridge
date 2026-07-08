@@ -15,6 +15,7 @@ import FarmerManagement from "./pages/FarmerManagement";
 import FarmerVerification from "./pages/Admin/FarmerVerification";
 import Login from "./pages/Auth/Login";
 import Register from "./pages/Auth/Register";
+import Checkout from "./pages/Checkout";
 
 function AgroBridgeApp() {
   const navigate = useNavigate();
@@ -35,6 +36,35 @@ function AgroBridgeApp() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+
+  // Image upload state
+  const [productImagePreview, setProductImagePreview] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+
+  const handleImageUpload = async (file: File) => {
+    if (!file) return;
+    setUploadingImage(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = reader.result as string;
+        const res = await apiFetch("/api/upload", {
+          method: "POST",
+          body: JSON.stringify({ image: base64 })
+        });
+        if (res.url) {
+          setProductImagePreview(res.url);
+          setProductForm(prev => ({ ...prev, images: [res.url] }));
+          showToast("Image uploaded successfully", "success");
+        }
+      };
+      reader.readAsDataURL(file);
+    } catch (e: any) {
+      showToast(e.message, "error");
+    } finally {
+      setUploadingImage(false);
+    }
+  };
 
   // Buyer State
   const [cart, setCart] = useState<{ product: Product; quantity: number }[]>([]);
@@ -510,9 +540,10 @@ const handleLogout = async () => {
                 exit={{ opacity: 0, y: -20 }}
                 transition={{ duration: 0.3 }}
               >
-                <Dashboard
+<Dashboard
                   user={user}
                   farmers={farmers}
+                  products={products}
                   orders={orders}
                   adminUsers={adminUsers}
                   analytics={analytics}
@@ -552,7 +583,7 @@ const handleLogout = async () => {
               </motion.div>
             )
           } />
-            <Route path="/about" element={
+<Route path="/about" element={
               <motion.div
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
@@ -561,6 +592,27 @@ const handleLogout = async () => {
               >
                 <About />
               </motion.div>
+            } />
+            <Route path="/checkout" element={
+              user ? (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <Checkout apiFetch={apiFetch} showToast={showToast} />
+                </motion.div>
+              ) : (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.3 }}
+                >
+                  <div className="py-20 text-center">Please sign in to checkout.</div>
+                </motion.div>
+              )
             } />
           </Routes>
         </AnimatePresence>
@@ -661,9 +713,15 @@ const handleLogout = async () => {
                     />
                   </div>
 
-                  <button onClick={handleCheckout} className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-black font-bold rounded transition-all cursor-pointer">
-                    Authorize Payment & Dispatch Proxy Order
-                  </button>
+            <button 
+              onClick={() => {
+                setShowCart(false);
+                navigate("/checkout", { state: { cart, shippingAddress, phone } });
+              }} 
+              className="w-full py-3 bg-emerald-500 hover:bg-emerald-600 text-black font-bold rounded transition-all cursor-pointer"
+            >
+              Proceed to Checkout
+            </button>
                 </div>
               </div>
             )}
@@ -784,6 +842,29 @@ const handleLogout = async () => {
               <div>
                 <label className="block text-white/50 mb-1">Produce Description</label>
                 <textarea rows={3} value={productForm.description} onChange={(e) => setProductForm({...productForm, description: e.target.value})} className="w-full bg-[#080B08] border border-white/10 rounded px-3 py-2 text-white focus:outline-none" />
+              </div>
+
+<div>
+                <label className="block text-white/50 mb-1">Crop Image</label>
+                <div className="space-y-2">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleImageUpload(file);
+                    }}
+                    className="w-full bg-[#080B08] border border-white/10 rounded px-3 py-2 text-white text-xs file:mr-2 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-emerald-500 file:text-black hover:file:bg-emerald-600 cursor-pointer"
+                  />
+                  {uploadingImage && (
+                    <div className="text-[10px] text-emerald-400">Uploading image to Cloudinary...</div>
+                  )}
+                  {productImagePreview && (
+                    <div className="w-full h-32 bg-zinc-950 rounded overflow-hidden">
+                      <img src={productImagePreview} alt="Preview" className="w-full h-full object-cover" />
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div>

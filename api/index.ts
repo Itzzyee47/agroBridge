@@ -6,7 +6,8 @@ import { db, User, Farmer, Product, Order, Review, Notification, PlatformConfig 
 import authRouter, { authenticate, requireRole, AuthenticatedRequest } from "../server/auth.js";
 import aiRouter from "../server/ai.js";
 
-dotenv.config();
+// Load .env.local explicitly before any configuration that depends on env vars
+dotenv.config({ path: ".env.local" });
 
 const app = express();
 app.use(express.json());
@@ -319,9 +320,9 @@ app.get("/api/orders", authenticate, async (req: AuthenticatedRequest, res) => {
 
 app.post("/api/orders", authenticate, requireRole(["buyer"]), async (req: AuthenticatedRequest, res) => {
   const user = req.user!;
-  const { cartItems, shippingAddress, phone } = req.body;
+  const { cartItems, shippingAddress, phone, deliveryPreference, deliveryFee } = req.body;
 
-  if (!cartItems || !Array.isArray(cartItems) || cartItems.length === 0 || !shippingAddress || !phone) {
+  if (!cartItems || !Array.isArray(cartItems) || cartItems.length === 0 || (!shippingAddress && deliveryPreference !== "pickup")) {
     return res.status(400).json({ error: "Missing cart items or shipping details" });
   }
 
@@ -370,13 +371,21 @@ app.post("/api/orders", authenticate, requireRole(["buyer"]), async (req: Authen
         id: "not_" + Math.random().toString(36).substring(2, 11),
         userId: farmer.agentId,
         title: "New Produce Order",
-        message: `${user.name} ordered ${item.quantity} ${dbProduct.unit} of ${dbProduct.name} representing farmer ${farmer.name}.`,
+        message: `${user.name} ordered ${item.quantity} ${dbProduct.unit} of ${dbProduct.name} representing farmer ${farmer.name}.` + 
+                 (deliveryPreference === "pickup" ? " (Pickup at farm)" : " (Delivery)"),
         read: false,
         createdAt: new Date().toISOString(),
       });
     }
 
-    const split = commissionSplit(totalAmount, db.config);
+// Add delivery fee if applicable
+    const deliveryFeeAmount = deliveryPreference === "delivery" ? (deliveryFee || 5000) : 0;
+    const finalTotal = totalAmount + deliveryFeeAmount;
+
+    const farmerAmount = Math.round((finalTotal * db.config.farmerPercentage) / 100);
+    const agentCommission = Math.round((finalTotal * db.config.agentPercentage) / 100);
+    const platformFee = finalTotal - farmerAmount - agentCommission;
+
     const orderId = "ord_" + Math.floor(100 + Math.random() * 900);
 
     const newOrder: Order = {
@@ -386,9 +395,16 @@ app.post("/api/orders", authenticate, requireRole(["buyer"]), async (req: Authen
       products: orderProducts,
       paymentStatus: "pending",
       deliveryStatus: "pending",
-      totals: split,
-      shippingAddress,
+      totals: {
+        farmerAmount,
+        agentCommission,
+        platformFee,
+        total: finalTotal,
+        deliveryFee: deliveryFeeAmount
+      },
+      shippingAddress: deliveryPreference === "pickup" ? "Pickup at farm" : shippingAddress,
       phone,
+      deliveryPreference: deliveryPreference || "delivery",
       createdAt: new Date().toISOString(),
     };
 

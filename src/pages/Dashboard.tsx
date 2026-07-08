@@ -1,13 +1,14 @@
 ﻿import React, { useState } from "react";
 import {
-  Plus, Edit, Eye, Trash, CheckCircle, Clock, Users, DollarSign, Brain, Star
+  Plus, Edit, Eye, Trash2, CheckCircle, Clock, Users, DollarSign, Brain, Star, Image as ImageIcon
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-import { User, Farmer, Order, PlatformConfig, Analytics } from "../types";
+import { User, Farmer, Order, PlatformConfig, Analytics, Product } from "../types";
 
 interface DashboardProps {
   user: User;
   farmers: Farmer[];
+  products: Product[];
   orders: Order[];
   adminUsers: (User & { agentProfile?: any })[];
   analytics: Analytics | null;
@@ -23,24 +24,11 @@ interface DashboardProps {
   apiFetch: (endpoint: string, options?: RequestInit) => Promise<any>;
   showToast: (message: string, type?: "success" | "error") => void;
 }
- 
-interface Product {
-  id: string;
-  name: string;
-  category: string;
-  description: string;
-  price: number;
-  stock: number;
-  unit: string;
-  images: string[];
-  availability: "immediate" | "seasonal" | "upcoming";
-  farmerId: string;
-  farmerName: string;
-}
 
 export default function Dashboard({
   user,
   farmers,
+  products,
   orders,
   adminUsers,
   analytics,
@@ -88,7 +76,7 @@ export default function Dashboard({
     }
   };
 
-  const runAiFarmAdvice = async () => {
+const runAiFarmAdvice = async () => {
     setFarmAdviceLoading(true);
     try {
       const res = await apiFetch("/api/ai/farm-recommendation", {
@@ -107,6 +95,10 @@ export default function Dashboard({
       setFarmAdviceLoading(false);
     }
   };
+
+  // Filter products to only show those from the agent's represented farmers
+  const agentFarmerIds = farmers.map(f => f.id);
+  const filteredProducts = products.filter(p => agentFarmerIds.includes(p.farmerId));
 
   return (
     <div id="dashboard_tab" className="space-y-10">
@@ -140,6 +132,8 @@ export default function Dashboard({
               </button>
             </div>
           </div>
+
+         
 
           {/* Subsections grids */}
           <div className="grid grid-cols-12 gap-8">
@@ -210,7 +204,7 @@ export default function Dashboard({
               </div>
             </div>
 
-            {/* Right: Earnings Commission Splitting Panel (Col-4) */}
+            {/* Earnings Commission Splitting Panel (Col-4) */}
             <div className="col-span-12 lg:col-span-4 bg-[#121812] border border-white/5 p-6 rounded-lg space-y-6">
               <h3 className="text-sm font-bold uppercase tracking-widest border-b border-white/5 pb-3">Earnings Ledger Split</h3>
 
@@ -219,7 +213,7 @@ export default function Dashboard({
                   <div className="flex justify-between text-xs text-white/50 mb-1">
                     <span>Farmers Payout share (85%)</span>
                     <span className="font-mono text-emerald-400">
-FCFA {orders.reduce((sum, o) => sum + o.totals.farmerAmount, 0).toLocaleString()}
+                      FCFA {orders.reduce((sum, o) => sum + o.totals.farmerAmount, 0).toLocaleString()}
                     </span>
                   </div>
                   <div className="w-full h-1.5 bg-white/5 rounded-full overflow-hidden">
@@ -264,6 +258,73 @@ FCFA {orders.reduce((sum, o) => sum + o.totals.farmerAmount, 0).toLocaleString()
                   Request Mobile Money Transfer
                 </button>
               </div>
+            </div>
+          </div>
+
+           {/* Products Management Grid (for agents/admins) */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between border-b border-white/5 pb-3">
+              <h3 className="text-base font-bold uppercase tracking-widest text-white/80">Managed Crop Products</h3>
+<span className="px-2 py-0.5 bg-emerald-950/40 text-emerald-400 border border-emerald-500/20 rounded text-[10px] font-mono">
+                {filteredProducts.length} Listings
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {filteredProducts.map(product => (
+                <div key={product.id} className="bg-[#121812] border border-white/5 rounded-lg overflow-hidden group hover:border-emerald-500/30 transition-all">
+                  <div className="aspect-video bg-zinc-900 relative">
+                    {product.images && product.images.length > 0 ? (
+                      <img src={product.images[0]} alt={product.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-white/20">
+                        <ImageIcon className="w-8 h-8" />
+                      </div>
+                    )}
+                    <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => {
+                          setProductForm(product);
+                          setShowProductModal(true);
+                        }}
+                        className="p-1.5 bg-black/50 hover:bg-emerald-500 hover:text-black rounded text-white transition-all cursor-pointer"
+                      >
+                        <Edit className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (confirm(`Delete product "${product.name}"?`)) {
+                            try {
+                              await apiFetch(`/api/products/${product.id}`, { method: "DELETE" });
+                              showToast("Product deleted");
+                              setProductForm({ name: "", category: "Fruits & Bananas", description: "", price: 0, stock: 100, unit: "Bunch", availability: "immediate", farmerId: "" });
+                            } catch (e: any) {
+                              showToast(e.message, "error");
+                            }
+                          }
+                        }}
+                        className="p-1.5 bg-black/50 hover:bg-red-500 hover:text-white rounded text-white transition-all cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="p-3 space-y-1">
+                    <span className="text-[9px] uppercase font-bold text-emerald-400 tracking-wider">{product.category}</span>
+                    <h4 className="text-sm font-semibold text-white truncate">{product.name}</h4>
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-mono text-emerald-400">FCFA {product.price.toLocaleString()}</span>
+                      <span className="text-[10px] text-white/40">{product.stock} units</span>
+                    </div>
+                    <div className="text-[10px] text-white/30 truncate">by {product.farmerName}</div>
+                  </div>
+                </div>
+              ))}
+{filteredProducts.length === 0 && (
+                <div className="col-span-full text-center py-8 text-white/30 text-xs">
+                  No crop products listed yet.
+                </div>
+              )}
             </div>
           </div>
 
@@ -511,25 +572,25 @@ FCFA {orders.reduce((sum, o) => sum + o.totals.farmerAmount, 0).toLocaleString()
         </div>
       )}
 
-       {/* ADMIN DASHBOARD FLAVOUR */}
-       {user.role === "admin" && analytics && (
-         <div className="space-y-10">
-           {/* Header with Review Farmers button */}
-           <div className="flex items-center justify-between gap-6 p-6 bg-[#121812] border border-white/5 rounded-xl">
-             <div>
-               <h2 className="text-2xl font-serif italic text-emerald-50">Admin Control Center</h2>
-               <p className="text-xs text-white/40">Platform overview and verification management.</p>
-             </div>
-<button
-               onClick={() => navigate("/admin/farmers")}
-               className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-black font-bold rounded flex items-center gap-2 transition-all text-xs cursor-pointer"
-             >
-               <Eye className="w-4 h-4" /> Review Farmers
-             </button>
-           </div>
+      {/* ADMIN DASHBOARD FLAVOUR */}
+      {user.role === "admin" && analytics && (
+        <div className="space-y-10">
+          {/* Header with Review Farmers button */}
+          <div className="flex items-center justify-between gap-6 p-6 bg-[#121812] border border-white/5 rounded-xl">
+            <div>
+              <h2 className="text-2xl font-serif italic text-emerald-50">Admin Control Center</h2>
+              <p className="text-xs text-white/40">Platform overview and verification management.</p>
+            </div>
+            <button
+              onClick={() => navigate("/admin/farmers")}
+              className="px-4 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-black font-bold rounded flex items-center gap-2 transition-all text-xs cursor-pointer"
+            >
+              <Eye className="w-4 h-4" /> Review Farmers
+            </button>
+          </div>
 
-           {/* Admin Overview Stats Cards */}
-           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          {/* Admin Overview Stats Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             <div className="bg-[#121812] border border-white/5 p-6 rounded-lg">
               <div className="text-[9px] text-white/30 uppercase tracking-[0.2em] mb-1">Platform Revenue</div>
               <div className="text-3xl font-mono text-emerald-50 font-bold">FCFA {analytics.totalRevenue.toLocaleString()}</div>
@@ -593,7 +654,7 @@ FCFA {orders.reduce((sum, o) => sum + o.totals.farmerAmount, 0).toLocaleString()
                                 <div className="text-[10px] text-white/30 font-mono">ID: {u.agentProfile.nationalId}</div>
                               </div>
                             ) : (
-                              <span className="text-white/30">â€”</span>
+                              <span className="text-white/30">—</span>
                             )}
                           </td>
                           <td className="px-5 py-4">
